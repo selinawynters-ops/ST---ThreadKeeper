@@ -6,8 +6,8 @@
  * into the prompt so the model never forgets what matters.
  */
 
-import { debounce, waitUntilCondition } from '../../utils.js';
-import { getContext, extension_settings, saveMetadataDebounced } from '../../extensions.js';
+import { debounce, waitUntilCondition } from '../../../utils.js';
+import { getContext, extension_settings, saveMetadataDebounced } from '../../../extensions.js';
 import {
     eventSource,
     event_types,
@@ -16,11 +16,11 @@ import {
     generateRaw,
     setExtensionPrompt,
     saveSettingsDebounced,
-} from '../../../script.js';
-import { getTokenCountAsync } from '../../tokenizers.js';
-import { debounce_timeout } from '../../constants.js';
-import { SlashCommandParser } from '../../slash-commands/SlashCommandParser.js';
-import { SlashCommand } from '../../slash-commands/SlashCommand.js';
+} from '../../../../script.js';
+import { getTokenCountAsync } from '../../../tokenizers.js';
+import { debounce_timeout } from '../../../constants.js';
+import { SlashCommandParser } from '../../../slash-commands/SlashCommandParser.js';
+import { SlashCommand } from '../../../slash-commands/SlashCommand.js';
 
 // ═══════════════════════════════════════════════════════════════════
 // CONSTANTS
