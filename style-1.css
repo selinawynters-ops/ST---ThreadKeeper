@@ -25,9 +25,6 @@
     background: rgba(0, 0, 0, 0.5);
     backdrop-filter: blur(3px);
     z-index: 10000;
-    display: flex;
-    align-items: center;
-    justify-content: center;
     opacity: 0;
     pointer-events: none;
     transition: opacity 0.25s ease;
@@ -40,6 +37,10 @@
 
 /* ── Terminal Window ── */
 #threadkeeper-terminal {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%) scale(0.95);
     width: 580px;
     max-width: 94vw;
     max-height: 84vh;
@@ -49,14 +50,14 @@
     border: 1px solid rgba(74, 222, 128, 0.2);
     border-radius: 10px;
     box-shadow: 0 8px 48px rgba(0, 0, 0, 0.6), 0 0 30px var(--tk-glow);
-    transform: scale(0.95) translateY(10px);
     transition: transform 0.25s ease;
     overflow: hidden;
     font-family: 'JetBrains Mono', 'Cascadia Code', 'Fira Code', monospace;
+    z-index: 10001;
 }
 
 #threadkeeper-overlay.open #threadkeeper-terminal {
-    transform: scale(1) translateY(0);
+    transform: translate(-50%, -50%) scale(1);
 }
 
 /* ── Header ── */
@@ -1009,17 +1010,10 @@
 
 /* ── Responsive ── */
 @media (max-width: 700px) {
-    #threadkeeper-overlay {
-        align-items: center;
-        justify-content: center;
-        padding: 12px;
-    }
-
     #threadkeeper-terminal {
-        width: 100%;
+        width: 96vw;
         max-width: 96vw;
         max-height: 85vh;
-        margin: auto;
     }
 
     .tk-filter-group {
@@ -1068,6 +1062,5 @@
 @media (min-width: 701px) and (max-width: 1200px) {
     #threadkeeper-terminal {
         width: 70vw;
-        max-height: 82vh;
     }
 }
