@@ -1260,6 +1260,9 @@ async function onChatChanged() {
 // ═══════════════════════════════════════════════════════════════════
 
 function injectMenuButton() {
+    // Prevent duplicate entries
+    document.querySelectorAll('#threadkeeper-menu-item').forEach(el => el.remove());
+
     // Try to inject into DreamTavern's Push Modal section
     // Look for the push modal section in the sidebar
     const pushModalSection = findPushModalSection();
