@@ -30,7 +30,7 @@ Almost nothing. A typical scan of 100 messages uses a fast model (like gpt-4o-mi
 
 1. Open SillyTavern
 2. Go to **Extensions** → **Install Extension**
-3. Paste this repo URL: `https://github.com/YOUR_USERNAME/Threadkeeper`
+3. Paste this repo URL: `https://github.com/selinawynters-ops/ST---ThreadKeeper/`
 4. Click **Install**
 5. Enable the extension
 6. **Threadkeeper** appears in your Push Modal menu ✨
