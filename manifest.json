@@ -1,0 +1,13 @@
+{
+    "display_name": "Threadkeeper",
+    "loading_order": 100,
+    "requires": [],
+    "optional": [],
+    "js": "index.js",
+    "css": "style.css",
+    "author": "Dreamweaver",
+    "version": "1.0.0",
+    "description": "LLM-powered memory for long roleplays. Extracts key facts from chat messages and injects them into the prompt so your model never forgets what matters.",
+    "homePage": "https://github.com/dreamweaver/Threadkeeper",
+    "auto_update": true
+}
