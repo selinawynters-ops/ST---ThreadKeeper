@@ -18,19 +18,63 @@
     --tk-glow: rgba(74, 222, 128, 0.06);
 }
 
+#threadkeeper-menu-item,
+#threadkeeper-menu-item:hover,
+#threadkeeper-menu-item:focus,
+#threadkeeper-menu-item:active {
+    background: transparent !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    outline: none !important;
+}
+
+#threadkeeper-menu-item {
+    gap: 12px !important;
+}
+
+#threadkeeper-menu-item .tk-menu-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 24px;
+    width: 24px;
+    height: 24px;
+    line-height: 0;
+    overflow: visible;
+    background: transparent;
+    border: 0;
+    box-shadow: none;
+}
+
+#threadkeeper-menu-item .tk-menu-icon svg {
+    display: block;
+    width: 30px !important;
+    height: 30px !important;
+    transform: translateY(-1px);
+    overflow: visible;
+}
+
+#threadkeeper-menu-item .tk-menu-label {
+    display: inline-flex;
+    align-items: center;
+    line-height: 1;
+    font-size: 1.18rem !important;
+    align-self: center;
+}
+
 /* ── Overlay ── */
 #threadkeeper-overlay {
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.5);
-    backdrop-filter: blur(3px);
     z-index: 10000;
-    display: flex;
-    align-items: center;
-    justify-content: center;
     opacity: 0;
     pointer-events: none;
     transition: opacity 0.25s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(3px);
 }
 
 #threadkeeper-overlay.open {
@@ -38,8 +82,15 @@
     pointer-events: all;
 }
 
+/* ── Mobile close hint (hidden on desktop) ── */
+.tk-close-hint {
+    display: none;
+}
+
 /* ── Terminal Window ── */
 #threadkeeper-terminal {
+    position: relative;
+    z-index: 1;
     width: 580px;
     max-width: 94vw;
     max-height: 84vh;
@@ -49,14 +100,27 @@
     border: 1px solid rgba(74, 222, 128, 0.2);
     border-radius: 10px;
     box-shadow: 0 8px 48px rgba(0, 0, 0, 0.6), 0 0 30px var(--tk-glow);
-    transform: scale(0.95) translateY(10px);
     transition: transform 0.25s ease;
-    overflow: hidden;
+    overflow-y: auto;
+    overflow-x: hidden;
     font-family: 'JetBrains Mono', 'Cascadia Code', 'Fira Code', monospace;
+    transform: scale(0.95);
+    scrollbar-width: thin;
+    scrollbar-color: #1a2332 transparent;
+    scroll-behavior: smooth;
+}
+
+#threadkeeper-terminal::-webkit-scrollbar {
+    width: 6px;
+}
+
+#threadkeeper-terminal::-webkit-scrollbar-thumb {
+    background: #1a2332;
+    border-radius: 3px;
 }
 
 #threadkeeper-overlay.open #threadkeeper-terminal {
-    transform: scale(1) translateY(0);
+    transform: scale(1);
 }
 
 /* ── Header ── */
@@ -190,6 +254,17 @@
     border-color: rgba(251, 191, 36, 0.4);
 }
 
+.tk-cmd-btn.danger {
+    border-color: rgba(248, 113, 113, 0.2);
+    background: rgba(248, 113, 113, 0.06);
+    color: var(--tk-red);
+}
+
+.tk-cmd-btn.danger:hover {
+    background: rgba(248, 113, 113, 0.14);
+    border-color: rgba(248, 113, 113, 0.4);
+}
+
 .tk-cmd-btn.secondary {
     border-color: rgba(34, 211, 238, 0.2);
     background: rgba(34, 211, 238, 0.06);
@@ -239,15 +314,17 @@
 
 /* ── Terminal Body ── */
 .tk-body {
-    flex: 1;
+    flex: 1 1 auto;
     overflow-y: auto;
+    overflow-x: hidden;
     padding: 12px 14px;
     font-size: 0.75rem;
     line-height: 1.7;
-    min-height: 200px;
-    max-height: 52vh;
+    min-height: 0;
     scrollbar-width: thin;
     scrollbar-color: #1a2332 transparent;
+    scroll-behavior: smooth;
+    overscroll-behavior: contain;
 }
 
 .tk-body::-webkit-scrollbar {
@@ -460,6 +537,20 @@
     display: none;
     max-height: 110px;
     overflow-y: auto;
+    overflow-x: hidden;
+    scroll-behavior: smooth;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+    scrollbar-color: #1a2332 transparent;
+}
+
+.tk-footer::-webkit-scrollbar {
+    width: 5px;
+}
+
+.tk-footer::-webkit-scrollbar-thumb {
+    background: #1a2332;
+    border-radius: 3px;
 }
 
 .tk-footer.visible {
@@ -488,13 +579,15 @@
     flex-direction: column;
     gap: 0;
     overflow-y: auto;
+    overflow-x: hidden;
     font-family: 'Raleway', -apple-system, BlinkMacSystemFont, sans-serif;
     font-size: 0.82rem;
-    flex: 1;
-    min-height: 200px;
-    max-height: 52vh;
+    flex: 1 1 auto;
+    min-height: 0;
     scrollbar-width: thin;
     scrollbar-color: #1a2332 transparent;
+    scroll-behavior: smooth;
+    overscroll-behavior: contain;
 }
 
 .tk-config-panel::-webkit-scrollbar {
@@ -510,9 +603,23 @@
     display: flex;
 }
 
+/* When a dropdown is open, disable scroll clipping so the absolute dropdown can overflow */
+.tk-config-panel.dropdown-open {
+    overflow: visible !important;
+}
+
+/* Also let the cfg-row and cfg-section overflow when dropdown is active */
+.tk-config-panel.dropdown-open .tk-cfg-row,
+.tk-config-panel.dropdown-open .tk-cfg-section {
+    overflow: visible !important;
+}
+
+
 .tk-cfg-section {
     padding: 14px 18px;
     border-bottom: 1px solid rgba(74, 222, 128, 0.08);
+    min-width: 0;
+    overflow: hidden;
 }
 
 .tk-cfg-title {
@@ -548,6 +655,20 @@
     justify-content: space-between;
     padding: 8px 0;
     gap: 12px;
+    min-width: 0;
+    overflow: hidden;
+}
+
+.tk-cfg-row-model {
+    padding-bottom: 4px;
+}
+
+.tk-cfg-row-accuracy {
+    padding-top: 2px;
+}
+
+.tk-cfg-row-hidden {
+    display: none;
 }
 
 .tk-cfg-label {
@@ -576,6 +697,8 @@
     cursor: pointer;
     appearance: none;
     min-width: 170px;
+    max-width: 100%;
+    box-sizing: border-box;
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%234ade80'/%3E%3C/svg%3E");
     background-repeat: no-repeat;
     background-position: right 10px center;
@@ -640,6 +763,7 @@
     display: flex;
     align-items: center;
     gap: 10px;
+    min-width: 0;
 }
 
 .tk-slider {
@@ -758,6 +882,7 @@
     display: block;
 }
 
+/* Debug panel */
 /* Config footer */
 .tk-cfg-footer {
     padding: 12px 18px;
@@ -811,7 +936,8 @@
 /* ── Searchable Model Picker ── */
 .tk-model-picker {
     position: relative;
-    min-width: 200px;
+    min-width: 0;
+    max-width: 100%;
 }
 
 .tk-mp-trigger {
@@ -827,8 +953,10 @@
     font-size: 0.7rem;
     cursor: pointer;
     transition: all 0.15s;
-    min-width: 200px;
+    min-width: 170px;
+    max-width: 100%;
     justify-content: space-between;
+    box-sizing: border-box;
 }
 
 .tk-mp-trigger:hover {
@@ -857,12 +985,140 @@
     white-space: nowrap;
 }
 
+.tk-placement-picker {
+    position: relative;
+    min-width: 220px;
+}
+
+.tk-placement-trigger {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 7px 12px;
+    border-radius: 8px;
+    border: 1px solid rgba(74, 222, 128, 0.3);
+    background: rgba(74, 222, 128, 0.08);
+    color: var(--tk-green);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.78rem;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.tk-placement-trigger:hover,
+.tk-placement-trigger.open {
+    background: rgba(74, 222, 128, 0.12);
+    border-color: rgba(74, 222, 128, 0.45);
+}
+
+.tk-placement-trigger-label {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-align: left;
+}
+
+.tk-placement-arrow {
+    font-size: 0.58rem;
+    color: var(--tk-green);
+    transition: transform 0.2s ease;
+}
+
+.tk-placement-trigger.open .tk-placement-arrow {
+    transform: rotate(180deg);
+}
+
+.tk-placement-dropdown {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    right: 0;
+    z-index: 10052;
+    display: none;
+    flex-direction: column;
+    gap: 6px;
+    padding: 8px;
+    border-radius: 12px;
+    border: 1px solid rgba(74, 222, 128, 0.15);
+    background: #2e3036;
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
+    max-height: 300px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-width: thin;
+    scrollbar-color: #1a2332 transparent;
+}
+
+.tk-placement-dropdown::-webkit-scrollbar {
+    width: 4px;
+}
+
+.tk-placement-dropdown::-webkit-scrollbar-thumb {
+    background: #1a2332;
+    border-radius: 2px;
+}
+
+.tk-placement-dropdown.open {
+    display: flex;
+}
+
+.tk-placement-item {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 14px 16px;
+    border: 0;
+    border-radius: 18px;
+    background: transparent;
+    color: #f0f1f7;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.82rem;
+    text-align: left;
+    cursor: pointer;
+    transition: background 0.15s ease;
+}
+
+.tk-placement-item:hover,
+.tk-placement-item.selected {
+    background: rgba(255, 255, 255, 0.04);
+}
+
+.tk-placement-label {
+    flex: 1;
+}
+
+.tk-placement-radio {
+    width: 17px;
+    height: 17px;
+    border-radius: 50%;
+    border: 2px solid rgba(220, 224, 255, 0.6);
+    flex-shrink: 0;
+    position: relative;
+}
+
+.tk-placement-item.selected .tk-placement-radio {
+    border-color: #b8c6ff;
+}
+
+.tk-placement-item.selected .tk-placement-radio::after {
+    content: '';
+    position: absolute;
+    inset: 3px;
+    border-radius: 50%;
+    background: #b8c6ff;
+}
+
 .tk-mp-dropdown {
     position: absolute;
     top: calc(100% + 4px);
-    left: 0;
     right: 0;
-    min-width: 340px;
+    width: 320px;
+    max-width: calc(100vw - 48px);
     background: #0c1420;
     border: 1px solid rgba(74, 222, 128, 0.2);
     border-radius: 6px;
@@ -909,10 +1165,13 @@
 
 .tk-mp-list {
     overflow-y: auto;
+    overflow-x: hidden;
     flex: 1;
     max-height: 260px;
     scrollbar-width: thin;
     scrollbar-color: #1a2332 transparent;
+    scroll-behavior: smooth;
+    overscroll-behavior: contain;
 }
 
 .tk-mp-list::-webkit-scrollbar {

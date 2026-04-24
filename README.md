@@ -192,7 +192,7 @@ For the curious or the tinkerers:
 ```
 Threadkeeper/
 ├── manifest.json    — Extension metadata for SillyTavern
-├── index.js         — All extension logic (~700 lines)
+├── index.js         — All extension logic (~2300 lines)
 ├── style.css        — Terminal UI styling (~600 lines)
 ├── demo.html        — Interactive standalone demo
 └── README.md        — This file

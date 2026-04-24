@@ -13,14 +13,20 @@ import {
     event_types,
     extension_prompt_types,
     extension_prompt_roles,
+    MAX_INJECTION_DEPTH,
     generateRaw,
     setExtensionPrompt,
     saveSettingsDebounced,
+    saveSettings,
+    getRequestHeaders,
 } from '../../../../script.js';
 import { getTokenCountAsync } from '../../../tokenizers.js';
 import { debounce_timeout } from '../../../constants.js';
 import { SlashCommandParser } from '../../../slash-commands/SlashCommandParser.js';
 import { SlashCommand } from '../../../slash-commands/SlashCommand.js';
+import { CONNECT_API_MAP } from '../../../slash-commands.js';
+import { SECRET_KEYS, findSecret } from '../../../secrets.js';
+import { oai_settings } from '../../../openai.js';
 
 // ═══════════════════════════════════════════════════════════════════
 // CONSTANTS
@@ -35,6 +41,37 @@ const CATEGORY_LABELS = { character: 'chr', relationship: 'rel', event: 'evt', i
 const ACCURACY_LABELS = ['Exact', 'Precise', 'Precise', 'Balanced', 'Balanced', 'Balanced', 'Creative', 'Creative', 'Creative', 'Wild', 'Wild'];
 const BUDGET_MAP = { small: 250, medium: 500, large: 800 };
 
+// Maps chat_completion_source → the oai_settings field that holds the selected model for that source.
+// Mirrors getChatCompletionModel() in openai.js so we can temporarily override the model during extraction.
+const TK_SOURCE_MODEL_FIELD = {
+    openai: 'openai_model',
+    claude: 'claude_model',
+    openrouter: 'openrouter_model',
+    makersuite: 'google_model',
+    vertexai: 'vertexai_model',
+    ai21: 'ai21_model',
+    mistralai: 'mistralai_model',
+    custom: 'custom_model',
+    cohere: 'cohere_model',
+    perplexity: 'perplexity_model',
+    groq: 'groq_model',
+    siliconflow: 'siliconflow_model',
+    electronhub: 'electronhub_model',
+    chutes: 'chutes_model',
+    navy: 'navy_model',
+    routeway: 'routeway_model',
+    nanogpt: 'nanogpt_model',
+    deepseek: 'deepseek_model',
+    aimlapi: 'aimlapi_model',
+    xai: 'xai_model',
+    pollinations: 'pollinations_model',
+    cometapi: 'cometapi_model',
+    moonshot: 'moonshot_model',
+    fireworks: 'fireworks_model',
+    azure_openai: 'azure_openai_model',
+    zai: 'zai_model',
+};
+
 const DEFAULT_SETTINGS = {
     enabled: true,
     // Connection
@@ -45,13 +82,44 @@ const DEFAULT_SETTINGS = {
     maxFacts: 100,
     injectBudget: 'medium',
     crossChatPinned: true,
+    autoPin: false,
     // Scanning
     autoScanInterval: 10,
     scanHidden: false,
     // Advanced
+    injectPlacement: 'message_depth',
     injectPosition: extension_prompt_types.IN_CHAT,
     injectDepth: 4,
+    messageDepth: 4,
     injectRole: extension_prompt_roles.SYSTEM,
+};
+
+const INJECTION_PLACEMENTS = {
+    after_author: {
+        id: 'after_author',
+        label: "After Author's Note",
+        position: extension_prompt_types.IN_PROMPT,
+        useMessageDepth: false,
+    },
+    before_author: {
+        id: 'before_author',
+        label: "Before Author's Note",
+        position: extension_prompt_types.BEFORE_PROMPT,
+        useMessageDepth: false,
+    },
+    top_chat: {
+        id: 'top_chat',
+        label: 'Top of chat history',
+        position: extension_prompt_types.IN_CHAT,
+        depth: MAX_INJECTION_DEPTH,
+        useMessageDepth: false,
+    },
+    message_depth: {
+        id: 'message_depth',
+        label: 'At message depth',
+        position: extension_prompt_types.IN_CHAT,
+        useMessageDepth: true,
+    },
 };
 
 // ═══════════════════════════════════════════════════════════════════
@@ -61,14 +129,18 @@ const DEFAULT_SETTINGS = {
 const EXTRACTION_SYSTEM_PROMPT = `You are a precise fact extractor for a roleplay conversation. Extract key facts that a language model would need to maintain story consistency.
 
 RULES:
-- Output ONLY valid JSON array — no markdown, no commentary
+- Output ONLY a valid JSON array — no markdown, no commentary, no explanation
 - Each fact: {"category": "<one of: character, relationship, event, item, location, plot>", "text": "<concise fact>", "source_index": <message_number>}
 - Be concise: each fact should be one clear sentence
 - Focus on facts that would be LOST if the model forgot earlier messages
 - Include: character traits, relationships, important items, locations, plot developments, key events
 - Do NOT include: dialogue quotes, writing style notes, or obvious real-time actions
 - Max 15 facts per batch
-- Do not duplicate facts that already exist in the provided existing facts list`;
+- Do not duplicate facts that already exist in the provided existing facts list
+- If there are no new facts to extract, output exactly: []
+
+EXAMPLE OUTPUT:
+[{"category":"character","text":"Luna has silver eyes and white hair","source_index":3},{"category":"location","text":"The story takes place in the city of Westmarch","source_index":7}]`;
 
 function buildExtractionPrompt(messages, existingFacts) {
     let prompt = 'Extract key facts from these roleplay messages:\n\n';
@@ -89,6 +161,70 @@ function buildExtractionPrompt(messages, existingFacts) {
     return prompt;
 }
 
+function extractAllBalancedSlices(text, openChar, closeChar) {
+    const results = [];
+    let searchFrom = 0;
+
+    while (searchFrom < text.length) {
+        const start = text.indexOf(openChar, searchFrom);
+        if (start === -1) break;
+
+        let depth = 0;
+        let inString = false;
+        let escaped = false;
+        let end = -1;
+
+        for (let i = start; i < text.length; i++) {
+            const ch = text[i];
+            if (inString) {
+                if (escaped) { escaped = false; continue; }
+                if (ch === '\\') { escaped = true; continue; }
+                if (ch === '"') inString = false;
+                continue;
+            }
+            if (ch === '"') { inString = true; continue; }
+            if (ch === openChar) depth++;
+            if (ch === closeChar) {
+                depth--;
+                if (depth === 0) { end = i; break; }
+            }
+        }
+
+        if (end !== -1) results.push(text.slice(start, end + 1));
+        searchFrom = start + 1;
+    }
+
+    return results;
+}
+
+function parseExtractionResponse(response) {
+    const text = String(response || '').trim();
+    if (!text) return [];
+
+    const candidates = [
+        text,
+        ...[...text.matchAll(/```(?:json)?\s*([\s\S]*?)```/gi)].map(m => m[1].trim()),
+        ...extractAllBalancedSlices(text, '[', ']'),
+        ...extractAllBalancedSlices(text, '{', '}'),
+    ];
+
+    for (const candidate of candidates) {
+        if (!candidate) continue;
+        try {
+            const parsed = JSON.parse(candidate);
+            if (Array.isArray(parsed)) return parsed;
+            if (parsed && typeof parsed === 'object') {
+                const nested = parsed.facts || parsed.data || parsed.results || parsed.memories || parsed.items;
+                if (Array.isArray(nested)) return nested;
+            }
+        } catch {
+            // Try next candidate.
+        }
+    }
+
+    return [];
+}
+
 // ═══════════════════════════════════════════════════════════════════
 // STATE
 // ═══════════════════════════════════════════════════════════════════
@@ -98,6 +234,8 @@ let isTerminalOpen = false;
 let showingConfig = false;
 let activeFilter = 'all';
 let messagesSinceLastScan = 0;
+let mobileStyleLink = null;
+const modelCatalogCache = new Map();
 
 // ═══════════════════════════════════════════════════════════════════
 // SETTINGS
@@ -113,6 +251,13 @@ function loadSettings() {
             extension_settings[MODULE_NAME][key] = val;
         }
     }
+    const settings = extension_settings[MODULE_NAME];
+    if (!settings.injectPlacement) {
+        settings.injectPlacement = inferInjectionPlacement(settings);
+    }
+    if (!Number.isFinite(settings.messageDepth) || settings.messageDepth < 0) {
+        settings.messageDepth = Number.isFinite(settings.injectDepth) ? settings.injectDepth : DEFAULT_SETTINGS.messageDepth;
+    }
     return extension_settings[MODULE_NAME];
 }
 
@@ -121,8 +266,34 @@ function getSettings() {
 }
 
 function saveSetting(key, value) {
+    const oldValue = extension_settings[MODULE_NAME][key];
     extension_settings[MODULE_NAME][key] = value;
     saveSettingsDebounced();
+}
+
+
+function inferInjectionPlacement(settings) {
+    if (settings.injectPosition === extension_prompt_types.IN_PROMPT) return 'after_author';
+    if (settings.injectPosition === extension_prompt_types.BEFORE_PROMPT) return 'before_author';
+    if (settings.injectPosition === extension_prompt_types.IN_CHAT && Number(settings.injectDepth) >= MAX_INJECTION_DEPTH) return 'top_chat';
+    return 'message_depth';
+}
+
+function getInjectionPlacementState(settings = getSettings()) {
+    const placementId = INJECTION_PLACEMENTS[settings.injectPlacement] ? settings.injectPlacement : inferInjectionPlacement(settings);
+    const placement = INJECTION_PLACEMENTS[placementId];
+    const messageDepth = Number.isFinite(settings.messageDepth) ? settings.messageDepth : DEFAULT_SETTINGS.messageDepth;
+    const resolvedDepth = placement.useMessageDepth ? messageDepth : placement.depth ?? settings.injectDepth;
+    const label = placement.useMessageDepth ? `${placement.label}: ${messageDepth}` : placement.label;
+
+    return {
+        placementId,
+        label,
+        position: placement.position,
+        depth: resolvedDepth,
+        messageDepth,
+        useMessageDepth: placement.useMessageDepth,
+    };
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -135,17 +306,17 @@ function saveSetting(key, value) {
  */
 function getTkData() {
     const context = getContext();
-    if (!context.chat_metadata) return { facts: [], lastScannedIndex: 0 };
-    if (!context.chat_metadata.threadkeeper) {
-        context.chat_metadata.threadkeeper = { facts: [], lastScannedIndex: 0 };
+    if (!context.chatMetadata) return { facts: [], lastScannedIndex: 0 };
+    if (!context.chatMetadata.threadkeeper) {
+        context.chatMetadata.threadkeeper = { facts: [], lastScannedIndex: 0 };
     }
-    return context.chat_metadata.threadkeeper;
+    return context.chatMetadata.threadkeeper;
 }
 
 function setTkData(data) {
     const context = getContext();
-    if (!context.chat_metadata) return;
-    context.chat_metadata.threadkeeper = data;
+    if (!context.chatMetadata) return;
+    context.chatMetadata.threadkeeper = data;
     saveMetadataDebounced();
 }
 
@@ -170,19 +341,23 @@ function setLastScannedIndex(idx) {
 function addFacts(newFacts) {
     const data = getTkData();
     const settings = getSettings();
+    const addedFacts = [];
 
     for (const fact of newFacts) {
         // Dedup: skip if very similar fact already exists
         const isDupe = data.facts.some(f => f && f.text === fact.text);
         if (isDupe) continue;
 
-        data.facts.push({
+        const storedFact = {
             category: fact.category,
             text: fact.text,
             sourceIndex: fact.source_index || 0,
             pinned: false,
             id: Date.now() + Math.random(),
-        });
+        };
+
+        data.facts.push(storedFact);
+        addedFacts.push(storedFact);
     }
 
     // Enforce max facts limit — rotate out oldest non-pinned
@@ -193,6 +368,7 @@ function addFacts(newFacts) {
     }
 
     setTkData(data);
+    return addedFacts;
 }
 
 function toggleFactPin(factId) {
@@ -201,6 +377,9 @@ function toggleFactPin(factId) {
     if (fact) {
         fact.pinned = !fact.pinned;
         setTkData(data);
+        // Flush debounced save immediately
+        saveMetadataDebounced.flush?.();
+        syncPinnedToGlobal();
     }
 }
 
@@ -210,6 +389,7 @@ function deleteFact(factId) {
     if (idx !== -1) {
         data.facts.splice(idx, 1);
         setTkData(data);
+        syncPinnedToGlobal();
     }
 }
 
@@ -217,6 +397,65 @@ function clearNonPinnedFacts() {
     const data = getTkData();
     data.facts = data.facts.filter(f => f && f.pinned);
     data.lastScannedIndex = 0;
+    setTkData(data);
+    syncPinnedToGlobal();
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// CROSS-CHAT PINNED FACTS
+// ═══════════════════════════════════════════════════════════════════
+
+function syncPinnedToGlobal() {
+    const settings = getSettings();
+    if (!settings.crossChatPinned) return;
+
+    const context = getContext();
+    const charKey = String(context.characterId ?? '');
+    if (!charKey) return;
+
+    if (!extension_settings[MODULE_NAME].globalPinnedFacts) {
+        extension_settings[MODULE_NAME].globalPinnedFacts = {};
+    }
+
+    const pinned = getPinnedFacts();
+    if (pinned.length > 0) {
+        extension_settings[MODULE_NAME].globalPinnedFacts[charKey] = pinned.map(f => ({
+            category: f.category,
+            text: f.text,
+        }));
+    } else {
+        delete extension_settings[MODULE_NAME].globalPinnedFacts[charKey];
+    }
+
+    saveSettingsDebounced();
+}
+
+function restorePinnedFromGlobal() {
+    const settings = getSettings();
+    if (!settings.crossChatPinned) return;
+
+    const context = getContext();
+    const charKey = String(context.characterId ?? '');
+    if (!charKey) return;
+
+    const globalPinned = extension_settings[MODULE_NAME].globalPinnedFacts?.[charKey];
+    if (!globalPinned || globalPinned.length === 0) return;
+
+    const data = getTkData();
+    for (const gf of globalPinned) {
+        const existing = data.facts.find(f => f && f.text === gf.text);
+        if (existing) {
+            existing.pinned = true;
+        } else {
+            data.facts.push({
+                category: gf.category,
+                text: gf.text,
+                sourceIndex: 0,
+                pinned: true,
+                id: Date.now() + Math.random(),
+            });
+        }
+    }
     setTkData(data);
 }
 
@@ -262,33 +501,38 @@ async function injectFacts() {
 
     let injectionText = lines.join('\n');
 
-    // Trim to budget
+    // Trim to budget — one server call to measure, then char-ratio estimation for trimming.
+    // The old approach called getTokenCountAsync once per fact popped, creating N serial AJAX
+    // requests for large fact lists and freezing the UI.
     const tokenCount = await getTokenCountAsync(injectionText);
-    if (tokenCount > budgetTokens) {
-        // Remove regular facts from the end (oldest) until we fit
-        while (regular.length > 0) {
-            regular.pop();
-            lines = ['[Threadkeeper — Key Facts for Story Continuity]', ''];
-            if (pinned.length > 0) {
-                lines.push('PINNED (always remember):');
-                for (const f of pinned) lines.push(`• [${f.category.toUpperCase()}] ${f.text}`);
-                lines.push('');
-            }
-            if (regular.length > 0) {
-                lines.push('EXTRACTED:');
-                for (const f of [...regular].reverse()) lines.push(`• [${f.category.toUpperCase()}] ${f.text}`);
-            }
-            injectionText = lines.join('\n');
-            const newCount = await getTokenCountAsync(injectionText);
-            if (newCount <= budgetTokens) break;
+    if (tokenCount > budgetTokens && regular.length > 0) {
+        // Proportional trim: use chars/token ratio from the initial measurement
+        // to estimate how many regular facts to keep in one shot.
+        const overRatio = tokenCount / budgetTokens;
+        const factsToKeep = Math.max(0, Math.floor(regular.length / overRatio));
+        regular.splice(factsToKeep);
+
+        // Rebuild once with the trimmed set
+        lines = ['[Threadkeeper — Key Facts for Story Continuity]', ''];
+        if (pinned.length > 0) {
+            lines.push('PINNED (always remember):');
+            for (const f of pinned) lines.push(`• [${f.category.toUpperCase()}] ${f.text}`);
+            lines.push('');
         }
+        if (regular.length > 0) {
+            lines.push('EXTRACTED:');
+            for (const f of [...regular].reverse()) lines.push(`• [${f.category.toUpperCase()}] ${f.text}`);
+        }
+        injectionText = lines.join('\n');
     }
+
+    const injectionPlacement = getInjectionPlacementState(settings);
 
     setExtensionPrompt(
         EXTENSION_PROMPT_KEY,
         injectionText,
-        settings.injectPosition,
-        settings.injectDepth,
+        injectionPlacement.position,
+        injectionPlacement.depth,
         false,
         settings.injectRole,
     );
@@ -326,6 +570,20 @@ async function runExtraction(fullRescan = false, logFn = null, progressFn = null
 
         const settings = getSettings();
         let lastScanned = getLastScannedIndex();
+
+        // Resolve which API backend and model to use for extraction (null = use ST's current active API/model)
+        let extractionApi = null;
+        let extractionSource = null;
+        let extractionModelField = null;
+        if (settings.connectionProfile && settings.connectionProfile !== '__current__') {
+            const profile = getSelectedConnectionProfile(settings.connectionProfile);
+            if (profile?.api) {
+                const apiConfig = CONNECT_API_MAP[String(profile.api).toLowerCase()];
+                extractionApi = apiConfig?.selected || profile.api;
+                extractionSource = apiConfig?.source || profile.api;
+                extractionModelField = TK_SOURCE_MODEL_FIELD[extractionSource] || null;
+            }
+        }
 
         if (fullRescan) {
             log(`<span class="tk-prompt">$</span> <span class="tk-cmd">re-extract --full</span>`);
@@ -365,6 +623,7 @@ async function runExtraction(fullRescan = false, logFn = null, progressFn = null
 
         let totalExtracted = 0;
         const existingFacts = getFacts();
+        const factCountBefore = existingFacts.length;
 
         for (let b = 0; b < batches.length; b++) {
             const batch = batches[b];
@@ -379,14 +638,33 @@ async function runExtraction(fullRescan = false, logFn = null, progressFn = null
 
             let response;
             try {
-                // Temperature mapping: slider 0-10 → actual 0.0-1.0
-                const actualTemp = settings.temperature;
-
-                response = await generateRaw({
-                    prompt: prompt,
-                    systemPrompt: EXTRACTION_SYSTEM_PROMPT,
-                    responseLength: 1024,
-                });
+                // Temporarily point oai_settings at the selected model so generateRaw uses it.
+                // generateRaw has no model parameter — it reads oai_settings.chat_completion_source
+                // and the matching model field at call time.
+                const shouldOverrideModel = settings.model &&
+                    extractionApi === 'openai' &&
+                    extractionSource &&
+                    extractionModelField;
+                let savedSource, savedModel;
+                if (shouldOverrideModel) {
+                    savedSource = oai_settings.chat_completion_source;
+                    savedModel = oai_settings[extractionModelField];
+                    oai_settings.chat_completion_source = extractionSource;
+                    oai_settings[extractionModelField] = settings.model;
+                }
+                try {
+                    response = await generateRaw({
+                        prompt: prompt,
+                        systemPrompt: EXTRACTION_SYSTEM_PROMPT,
+                        responseLength: 1024,
+                        ...(extractionApi ? { api: extractionApi } : {}),
+                    });
+                } finally {
+                    if (shouldOverrideModel) {
+                        oai_settings.chat_completion_source = savedSource;
+                        oai_settings[extractionModelField] = savedModel;
+                    }
+                }
             } catch (err) {
                 log(`<span class="tk-error">API error: ${err.message || 'Unknown error'}</span>`);
                 continue;
@@ -400,16 +678,9 @@ async function runExtraction(fullRescan = false, logFn = null, progressFn = null
             // Parse JSON from response
             let newFacts = [];
             try {
-                // Try to find JSON array in the response
-                const jsonMatch = response.match(/\[[\s\S]*?\]/);
-                if (jsonMatch) {
-                    newFacts = JSON.parse(jsonMatch[0]);
-                } else {
-                    throw new Error('No JSON array found in response');
-                }
+                newFacts = parseExtractionResponse(response);
             } catch (parseErr) {
-                log(`<span class="tk-warn">Parse error in batch ${b + 1}: ${parseErr.message}</span>`);
-                console.warn('Threadkeeper: Failed to parse extraction response:', response);
+                log(`<span class="tk-dim">Batch ${b + 1}: skipped (${parseErr.message})</span>`);
                 continue;
             }
 
@@ -420,10 +691,10 @@ async function runExtraction(fullRescan = false, logFn = null, progressFn = null
             );
 
             if (validFacts.length > 0) {
-                addFacts(validFacts);
-                totalExtracted += validFacts.length;
+                const addedFacts = addFacts(validFacts);
+                totalExtracted += addedFacts.length;
 
-                for (const fact of validFacts) {
+                for (const fact of addedFacts) {
                     existingFacts.push(fact); // Update running list for dedup
                     onFact(fact);
                 }
@@ -434,15 +705,47 @@ async function runExtraction(fullRescan = false, logFn = null, progressFn = null
         setLastScannedIndex(chat.length);
         messagesSinceLastScan = 0;
 
-        // Update injection
-        await injectFacts();
+        // Auto-pin newly extracted facts if enabled
+        if (settings.autoPin) {
+            const factCountAfter = getFacts().length;
+            const actuallyAdded = factCountAfter - factCountBefore;
+
+            if (actuallyAdded > 0) {
+                const data = getTkData();
+                let pinCount = 0;
+                // Pin facts from the end backwards (newly added ones)
+                for (let i = data.facts.length - 1; i >= 0 && pinCount < actuallyAdded; i--) {
+                    if (data.facts[i] && !data.facts[i].pinned) {
+                        data.facts[i].pinned = true;
+                        pinCount++;
+                    }
+                }
+                if (pinCount > 0) {
+                    setTkData(data);
+                }
+            }
+        }
+
+        // Force immediate metadata save to ensure facts persist
+        await new Promise(resolve => {
+            const context = getContext();
+            if (context.chatMetadata) {
+                saveMetadataDebounced.flush?.();
+            }
+            setTimeout(resolve, 100);
+        });
+
+        // Update injection — returns the final trimmed injection text
+        const injectedText = await injectFacts();
 
         const allFacts = getFacts();
         log(`<br>`);
         log(`<span class="tk-success">✓ ${fullRescan ? 'Re-extracted' : 'Extracted'} ${totalExtracted} facts · ${allFacts.length} total in memory</span>`);
 
-        const tokenEstimate = Math.ceil(allFacts.map(f => f.text).join(' ').length / 4);
-        log(`<span class="tk-dim">Prompt space used: ~${tokenEstimate} tokens</span>`);
+        if (injectedText) {
+            const tokenCount = await getTokenCountAsync(injectedText);
+            log(`<span class="tk-dim">Prompt space used: ${tokenCount} tokens</span>`);
+        }
 
     } finally {
         isExtracting = false;
@@ -478,7 +781,7 @@ const MEMORY_ORB_SVG = `<svg viewBox="0 0 64 64" fill="none" xmlns="http://www.w
   <path d="M24 50 Q32 54 40 50" stroke="#b39ddb" stroke-width="1" fill="none" opacity="0.4"/>
 </svg>`;
 
-const MEMORY_ORB_SVG_SMALL = `<svg viewBox="0 0 64 64" width="18" height="18" fill="none" xmlns="http://www.w3.org/2000/svg">
+const MEMORY_ORB_SVG_SMALL = `<svg viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
   <defs>
     <linearGradient id="tkOrbS" x1="0%" y1="0%" x2="100%" y2="100%">
       <stop offset="0%" stop-color="#a78bfa"/>
@@ -500,7 +803,8 @@ const MEMORY_ORB_SVG_SMALL = `<svg viewBox="0 0 64 64" width="18" height="18" fi
 function buildTerminalHTML() {
     return `
     <div id="threadkeeper-overlay">
-        <div id="threadkeeper-terminal">
+    <div class="tk-close-hint">tap to close</div>
+            <div id="threadkeeper-terminal">
             <!-- Header -->
             <div class="tk-header">
                 <div class="tk-dots">
@@ -526,6 +830,7 @@ function buildTerminalHTML() {
             <div class="tk-toolbar" id="tk-toolbar">
                 <button class="tk-cmd-btn" id="tk-extract-btn">▶ extract</button>
                 <button class="tk-cmd-btn reextract" id="tk-reextract-btn">⟲ re-extract</button>
+                <button class="tk-cmd-btn danger" id="tk-clear-facts-btn">✕ clear unpinned</button>
                 <div class="tk-toolbar-sep"></div>
                 <button class="tk-cmd-btn secondary" id="tk-preview-btn">◉ preview</button>
                 <button class="tk-cmd-btn secondary" id="tk-settings-btn">⚙ settings</button>
@@ -558,14 +863,26 @@ function buildTerminalHTML() {
 function buildConfigHTML() {
     const settings = getSettings();
     const profiles = getConnectionProfiles();
+    const injectionPlacement = getInjectionPlacementState(settings);
     const tempIdx = Math.round(settings.temperature * 10);
     const tempLabel = ACCURACY_LABELS[tempIdx] || 'Balanced';
+    const tempDisplay = `${tempLabel} (${settings.temperature.toFixed(1)})`;
 
     let profileOptions = '<option value="__current__">🟢 Current active connection</option>';
     for (const p of profiles) {
         const selected = settings.connectionProfile === p.id ? ' selected' : '';
         profileOptions += `<option value="${p.id}"${selected}>${p.name}</option>`;
     }
+
+    const placementOptions = Object.values(INJECTION_PLACEMENTS).map((placement) => {
+        const isSelected = placement.id === injectionPlacement.placementId;
+        const label = placement.useMessageDepth ? `${placement.label}: ${injectionPlacement.messageDepth}` : placement.label;
+        return `
+            <button class="tk-placement-item ${isSelected ? 'selected' : ''}" type="button" data-placement-id="${placement.id}">
+                <span class="tk-placement-label">${label}</span>
+                <span class="tk-placement-radio"></span>
+            </button>`;
+    }).join('');
 
     return `
     <!-- Connection -->
@@ -578,7 +895,7 @@ function buildConfigHTML() {
             </div>
             <select class="tk-cfg-select" id="tk-cfg-connection">${profileOptions}</select>
         </div>
-        <div class="tk-cfg-row" style="align-items:flex-start;">
+        <div class="tk-cfg-row tk-cfg-row-model" style="align-items:flex-start;">
             <div class="tk-cfg-label">
                 Model for scanning
                 <span class="tk-cfg-hint">A fast, cheap model is best — type to search</span>
@@ -596,14 +913,14 @@ function buildConfigHTML() {
                 </div>
             </div>
         </div>
-        <div class="tk-cfg-row">
+        <div class="tk-cfg-row tk-cfg-row-accuracy">
             <div class="tk-cfg-label">
                 Accuracy
                 <span class="tk-cfg-hint">Lower = more precise facts. Higher = more creative interpretation</span>
             </div>
             <div class="tk-slider-wrap">
                 <input type="range" class="tk-slider" id="tk-cfg-temp" min="0" max="10" value="${tempIdx}">
-                <span class="tk-slider-val" id="tk-cfg-temp-val">${tempLabel}</span>
+                <span class="tk-slider-val" id="tk-cfg-temp-val">${tempDisplay}</span>
             </div>
         </div>
     </div>
@@ -635,6 +952,13 @@ function buildConfigHTML() {
                 <span class="tk-cfg-hint">Pinned facts carry over when you start a new chat with the same character</span>
             </div>
             <label class="tk-toggle"><input type="checkbox" id="tk-cfg-crosschat" ${settings.crossChatPinned ? 'checked' : ''}><span class="slider"></span></label>
+        </div>
+        <div class="tk-cfg-row">
+            <div class="tk-cfg-label">
+                Auto-pin when extracting
+                <span class="tk-cfg-hint">Automatically pin newly extracted facts so they persist longer</span>
+            </div>
+            <label class="tk-toggle"><input type="checkbox" id="tk-cfg-autopin" ${settings.autoPin ? 'checked' : ''}><span class="slider"></span></label>
         </div>
     </div>
 
@@ -670,19 +994,24 @@ function buildConfigHTML() {
             <div class="tk-cfg-row">
                 <div class="tk-cfg-label">
                     Injection position
-                    <span class="tk-cfg-hint">Where facts appear in the prompt</span>
+                    <span class="tk-cfg-hint">Where facts appear in the prompt — after Author's Note is usually best</span>
                 </div>
-                <select class="tk-cfg-select" id="tk-cfg-position">
-                    <option value="1"${settings.injectPosition === 1 ? ' selected' : ''}>In-chat at depth</option>
-                    <option value="0"${settings.injectPosition === 0 ? ' selected' : ''}>After story string</option>
-                </select>
+                <div class="tk-placement-picker" id="tk-placement-picker">
+                    <button class="tk-placement-trigger" id="tk-placement-trigger" type="button" aria-expanded="false">
+                        <span class="tk-placement-trigger-label" id="tk-placement-selected">${injectionPlacement.label}</span>
+                        <span class="tk-placement-arrow">▼</span>
+                    </button>
+                    <div class="tk-placement-dropdown" id="tk-placement-dropdown">
+                        ${placementOptions}
+                    </div>
+                </div>
             </div>
-            <div class="tk-cfg-row">
+            <div class="tk-cfg-row ${injectionPlacement.useMessageDepth ? '' : 'tk-cfg-row-hidden'}" id="tk-cfg-depth-row">
                 <div class="tk-cfg-label">
-                    Injection depth
+                    Message depth
                     <span class="tk-cfg-hint">How many messages from the bottom (0 = last message)</span>
                 </div>
-                <input type="number" class="tk-number" id="tk-cfg-depth" value="${settings.injectDepth}" min="0" max="100">
+                <input type="number" class="tk-number" id="tk-cfg-depth" value="${injectionPlacement.messageDepth}" min="0" max="100">
             </div>
         </div>
     </div>
@@ -733,7 +1062,7 @@ function refreshTerminalContent() {
     // Show existing facts
     const facts = getFacts();
     if (facts.length > 0) {
-        addTerminalLine(`<span class="tk-dim">${facts.length} facts in memory (${getPinnedFacts().length} pinned)</span>`);
+        addTerminalLine(`<span id="tk-memory-summary" class="tk-dim">${facts.length} facts in memory (${getPinnedFacts().length} pinned)</span>`);
         addTerminalLine(`<br>`);
         for (const fact of facts) {
             addFactLine(fact);
@@ -797,15 +1126,35 @@ function removeCursor() {
 function updateStats() {
     const facts = getFacts();
     const pinned = getPinnedFacts();
-    const tokenEstimate = Math.ceil(facts.map(f => f.text).join(' ').length / 4);
+
+    // Estimate token usage from the actual injection format (headers + labels included).
+    // Using char/4 heuristic here — no server call — so this is safe to call frequently.
+    let tokenEstimate = 0;
+    if (facts.length > 0) {
+        const pinnedFacts = facts.filter(f => f.pinned);
+        const regularFacts = facts.filter(f => !f.pinned);
+        const lines = ['[Threadkeeper — Key Facts for Story Continuity]', ''];
+        if (pinnedFacts.length > 0) {
+            lines.push('PINNED (always remember):');
+            for (const f of pinnedFacts) lines.push(`• [${f.category.toUpperCase()}] ${f.text}`);
+            lines.push('');
+        }
+        if (regularFacts.length > 0) {
+            lines.push('EXTRACTED:');
+            for (const f of [...regularFacts].reverse()) lines.push(`• [${f.category.toUpperCase()}] ${f.text}`);
+        }
+        tokenEstimate = Math.ceil(lines.join('\n').length / 4);
+    }
 
     const elFacts = document.getElementById('tk-stat-facts');
     const elPinned = document.getElementById('tk-stat-pinned');
     const elTokens = document.getElementById('tk-stat-tokens');
+    const elSummary = document.getElementById('tk-memory-summary');
 
     if (elFacts) elFacts.textContent = facts.length;
     if (elPinned) elPinned.textContent = pinned.length;
     if (elTokens) elTokens.textContent = '~' + tokenEstimate;
+    if (elSummary) elSummary.textContent = `${facts.length} facts in memory (${pinned.length} pinned)`;
 }
 
 function escapeHtml(text) {
@@ -839,12 +1188,19 @@ function toggleConfig() {
 }
 
 function attachConfigListeners() {
+    // Sync settings from storage
+    syncUIFromSettings();
+
     // Temperature slider
     const tempSlider = document.getElementById('tk-cfg-temp');
     if (tempSlider) {
         tempSlider.addEventListener('input', function () {
             const label = document.getElementById('tk-cfg-temp-val');
-            if (label) label.textContent = ACCURACY_LABELS[parseInt(this.value)] || 'Balanced';
+            if (label) {
+                const value = parseInt(this.value) / 10;
+                const text = ACCURACY_LABELS[parseInt(this.value)] || 'Balanced';
+                label.textContent = `${text} (${value.toFixed(1)})`;
+            }
         });
     }
 
@@ -876,11 +1232,19 @@ function attachConfigListeners() {
     // Save button
     const saveBtn = document.getElementById('tk-cfg-save');
     if (saveBtn) {
-        saveBtn.addEventListener('click', () => {
+        saveBtn.addEventListener('click', async () => {
             saveConfigFromUI();
+
+            let serverResult = null;
+            try {
+                serverResult = await saveSettings();
+            } catch (err) {
+                // saveSettings failure is non-fatal; button label will reflect it
+            }
+
             const label = saveBtn.querySelector('.tk-save-label');
             saveBtn.classList.add('saved');
-            if (label) label.textContent = 'Saved ✓';
+            if (label) label.textContent = serverResult !== null ? 'Saved ✓' : 'Save Failed!';
             setTimeout(() => {
                 saveBtn.classList.remove('saved');
                 if (label) label.textContent = 'Save';
@@ -888,18 +1252,88 @@ function attachConfigListeners() {
         });
     }
 
+    // Live-save listeners — write to memory immediately, persist via debounce
+    const connection = document.getElementById('tk-cfg-connection');
+    if (connection) {
+        connection.addEventListener('change', (e) => {
+            saveSetting('connectionProfile', e.target.value);
+        });
+    }
+
+    const temp = document.getElementById('tk-cfg-temp');
+    if (temp) {
+        temp.addEventListener('change', (e) => {
+            saveSetting('temperature', parseInt(e.target.value) / 10);
+        });
+    }
+
+    const maxFacts = document.getElementById('tk-cfg-maxfacts');
+    if (maxFacts) {
+        maxFacts.addEventListener('change', (e) => {
+            const val = parseInt(e.target.value);
+            if (Number.isFinite(val) && val >= 1) saveSetting('maxFacts', val);
+        });
+    }
+
+    if (budgetContainer) {
+        budgetContainer.querySelectorAll('.tk-pill').forEach(pill => {
+            pill.addEventListener('click', () => {
+                saveSetting('injectBudget', pill.dataset.v);
+            });
+        });
+    }
+
+    const crossChat = document.getElementById('tk-cfg-crosschat');
+    if (crossChat) {
+        crossChat.addEventListener('change', (e) => {
+            saveSetting('crossChatPinned', e.target.checked);
+        });
+    }
+
+    const autoPin = document.getElementById('tk-cfg-autopin');
+    if (autoPin) {
+        autoPin.addEventListener('change', (e) => {
+            saveSetting('autoPin', e.target.checked);
+        });
+    }
+
+    const autoScan = document.getElementById('tk-cfg-autoscan');
+    if (autoScan) {
+        autoScan.addEventListener('change', (e) => {
+            const val = parseInt(e.target.value);
+            if (Number.isFinite(val) && val >= 0) saveSetting('autoScanInterval', val);
+        });
+    }
+
+    const scanHidden = document.getElementById('tk-cfg-hidden');
+    if (scanHidden) {
+        scanHidden.addEventListener('change', (e) => {
+            saveSetting('scanHidden', e.target.checked);
+        });
+    }
+
+    const depthInput = document.getElementById('tk-cfg-depth');
+    if (depthInput) {
+        depthInput.addEventListener('change', (e) => {
+            const val = Math.max(0, parseInt(e.target.value) || DEFAULT_SETTINGS.messageDepth);
+            saveSetting('messageDepth', val);
+        });
+    }
+
     // Model picker
     setupModelPicker();
+    setupPlacementPicker();
 }
 
 function saveConfigFromUI() {
-    const s = getSettings();
-
     const connection = document.getElementById('tk-cfg-connection');
     if (connection) saveSetting('connectionProfile', connection.value);
 
     const model = document.getElementById('tk-mp-selected');
-    if (model) saveSetting('model', model.textContent);
+    if (model) {
+        const selectedModel = String(model.dataset.modelId || model.textContent || '').trim();
+        saveSetting('model', selectedModel && selectedModel !== 'Use default model' ? selectedModel : '');
+    }
 
     const temp = document.getElementById('tk-cfg-temp');
     if (temp) saveSetting('temperature', parseInt(temp.value) / 10);
@@ -913,17 +1347,25 @@ function saveConfigFromUI() {
     const crossChat = document.getElementById('tk-cfg-crosschat');
     if (crossChat) saveSetting('crossChatPinned', crossChat.checked);
 
+    const autoPin = document.getElementById('tk-cfg-autopin');
+    if (autoPin) saveSetting('autoPin', autoPin.checked);
+
     const autoScan = document.getElementById('tk-cfg-autoscan');
     if (autoScan) saveSetting('autoScanInterval', parseInt(autoScan.value) || 0);
 
     const hidden = document.getElementById('tk-cfg-hidden');
     if (hidden) saveSetting('scanHidden', hidden.checked);
 
-    const position = document.getElementById('tk-cfg-position');
-    if (position) saveSetting('injectPosition', parseInt(position.value));
-
     const depth = document.getElementById('tk-cfg-depth');
-    if (depth) saveSetting('injectDepth', parseInt(depth.value) || 4);
+    const messageDepth = Math.max(0, parseInt(depth?.value) || DEFAULT_SETTINGS.messageDepth);
+    saveSetting('messageDepth', messageDepth);
+
+    const selectedPlacementEl = document.querySelector('.tk-placement-item.selected');
+    const selectedPlacement = selectedPlacementEl?.dataset.placementId || getInjectionPlacementState().placementId;
+    const placementState = getInjectionPlacementState({ ...getSettings(), injectPlacement: selectedPlacement, messageDepth });
+    saveSetting('injectPlacement', placementState.placementId);
+    saveSetting('injectPosition', placementState.position);
+    saveSetting('injectDepth', placementState.depth);
 
     // Re-inject with new settings
     injectFacts();
@@ -938,21 +1380,30 @@ function setupModelPicker() {
     const dropdown = document.getElementById('tk-mp-dropdown');
     const search = document.getElementById('tk-mp-search');
     const list = document.getElementById('tk-mp-list');
+    const connectionSelect = document.getElementById('tk-cfg-connection');
 
     if (!trigger || !dropdown) return;
 
-    // Populate model list from available models
-    const models = getAvailableModels();
-    const selectedModel = getSettings().model || '';
+    let models = [];
+    let refreshRequestId = 0;
 
     function renderList(filter = '') {
         if (!list) return;
+        const selectedModel = document.getElementById('tk-mp-selected')?.dataset?.modelId ||
+            document.getElementById('tk-mp-selected')?.textContent?.trim() ||
+            getSettings().model || '';
         const q = filter.toLowerCase();
-        list.innerHTML = models.map(m => {
-            const match = !q || m.name.toLowerCase().includes(q) || (m.provider || '').toLowerCase().includes(q);
+        const visibleModels = models.filter(m => !q || m.name.toLowerCase().includes(q) || (m.provider || '').toLowerCase().includes(q));
+
+        if (visibleModels.length === 0) {
+            list.innerHTML = `<div class="tk-mp-empty">${models.length === 0 ? 'No models found for this profile' : 'No models match your search'}</div>`;
+            return;
+        }
+
+        list.innerHTML = visibleModels.map(m => {
             const sel = m.id === selectedModel;
             return `
-                <div class="tk-mp-item ${sel ? 'selected' : ''} ${match ? '' : 'hidden'}" data-model-id="${escapeHtml(m.id)}">
+                <div class="tk-mp-item ${sel ? 'selected' : ''}" data-model-id="${escapeHtml(m.id)}">
                     <div class="tk-mp-radio"></div>
                     <div class="tk-mp-item-info">
                         <span class="tk-mp-model-name">${escapeHtml(m.name)}</span>
@@ -962,17 +1413,50 @@ function setupModelPicker() {
         }).join('');
     }
 
+    function updateSelectedModelLabel(modelId) {
+        const nameEl = document.getElementById('tk-mp-selected');
+        if (nameEl) {
+            nameEl.textContent = modelId || 'Use default model';
+            nameEl.dataset.modelId = modelId || '';
+        }
+    }
+
+    async function refreshModels(filter = '') {
+        const requestId = ++refreshRequestId;
+        if (list) {
+            list.innerHTML = '<div class="tk-mp-empty">Loading models...</div>';
+        }
+        const nextModels = await getAvailableModels(connectionSelect?.value);
+        if (requestId !== refreshRequestId) {
+            return;
+        }
+        models = nextModels;
+        renderList(filter);
+    }
+
+    const configPanel = document.querySelector('.tk-config-panel');
+
+    function openDropdown() {
+        // Disable config panel scroll clipping so dropdown can overflow
+        if (configPanel) configPanel.classList.add('dropdown-open');
+        dropdown.classList.add('open');
+        trigger.classList.add('open');
+        if (search) { search.value = ''; search.focus(); }
+        void refreshModels();
+    }
+
+    function closeDropdown() {
+        dropdown.classList.remove('open');
+        trigger.classList.remove('open');
+        if (configPanel) configPanel.classList.remove('dropdown-open');
+    }
+
     trigger.addEventListener('click', (e) => {
         e.stopPropagation();
-        const isOpen = dropdown.classList.contains('open');
-        if (isOpen) {
-            dropdown.classList.remove('open');
-            trigger.classList.remove('open');
+        if (dropdown.classList.contains('open')) {
+            closeDropdown();
         } else {
-            dropdown.classList.add('open');
-            trigger.classList.add('open');
-            if (search) { search.value = ''; search.focus(); }
-            renderList();
+            openDropdown();
         }
     });
 
@@ -986,41 +1470,478 @@ function setupModelPicker() {
             const item = e.target.closest('.tk-mp-item');
             if (!item) return;
             const modelId = item.dataset.modelId;
-            const nameEl = document.getElementById('tk-mp-selected');
-            if (nameEl) nameEl.textContent = modelId;
+            updateSelectedModelLabel(modelId);
             renderList(search?.value || '');
-            setTimeout(() => {
-                dropdown.classList.remove('open');
-                trigger.classList.remove('open');
-            }, 150);
+            saveSetting('model', modelId);
+            closeDropdown();
         });
     }
 
     if (dropdown) dropdown.addEventListener('click', (e) => e.stopPropagation());
 
-    renderList();
-}
-
-function getAvailableModels() {
-    // Try to read models from ST's model list if available
-    try {
-        const modelSelect = document.getElementById('model_openai_select') ||
-                           document.getElementById('model_togetherai_select') ||
-                           document.querySelector('[id*="model"][id*="select"]');
-        if (modelSelect) {
-            const models = [];
-            modelSelect.querySelectorAll('option').forEach(opt => {
-                if (opt.value) {
-                    models.push({ id: opt.value, name: opt.textContent.trim(), provider: '' });
-                }
-            });
-            if (models.length > 0) return models;
-        }
-    } catch (e) {
-        console.debug('Threadkeeper: Could not read model list from DOM', e);
+    if (connectionSelect) {
+        connectionSelect.addEventListener('change', () => {
+            updateSelectedModelLabel(getDefaultModelForSelection(connectionSelect.value));
+            void refreshModels(search?.value || '');
+        });
     }
 
-    // Fallback: common models
+    // Initialize with saved model, or default if not set
+    const savedModel = getSettings().model;
+    updateSelectedModelLabel(savedModel || getDefaultModelForSelection(connectionSelect?.value));
+    void refreshModels();
+}
+
+function setupPlacementPicker() {
+    const trigger = document.getElementById('tk-placement-trigger');
+    const dropdown = document.getElementById('tk-placement-dropdown');
+    const depthRow = document.getElementById('tk-cfg-depth-row');
+    const depthInput = document.getElementById('tk-cfg-depth');
+
+    if (!trigger || !dropdown) return;
+
+    const syncPlacementUI = (placementId) => {
+        const selectedLabel = document.getElementById('tk-placement-selected');
+        const placement = INJECTION_PLACEMENTS[placementId] || INJECTION_PLACEMENTS.message_depth;
+        const messageDepth = Math.max(0, parseInt(depthInput?.value) || DEFAULT_SETTINGS.messageDepth);
+        const label = placement.useMessageDepth ? `${placement.label}: ${messageDepth}` : placement.label;
+
+        dropdown.querySelectorAll('.tk-placement-item').forEach((item) => {
+            item.classList.toggle('selected', item.dataset.placementId === placementId);
+            const labelEl = item.querySelector('.tk-placement-label');
+            if (labelEl && item.dataset.placementId === 'message_depth') {
+                labelEl.textContent = `${INJECTION_PLACEMENTS.message_depth.label}: ${messageDepth}`;
+            }
+        });
+
+        if (selectedLabel) selectedLabel.textContent = label;
+        if (depthRow) depthRow.classList.toggle('tk-cfg-row-hidden', !placement.useMessageDepth);
+    };
+
+    // Initialize with saved placement setting
+    const savedPlacement = getSettings().injectPlacement || 'message_depth';
+    syncPlacementUI(savedPlacement);
+
+    const configPanel = document.querySelector('.tk-config-panel');
+
+    const repositionDropdown = () => {
+        if (!dropdown.classList.contains('open')) return;
+
+        const triggerRect = trigger.getBoundingClientRect();
+        const dropdownRect = dropdown.getBoundingClientRect();
+        const configPanelRect = configPanel?.getBoundingClientRect();
+
+        // Check if dropdown extends below viewport
+        if (dropdownRect.bottom > window.innerHeight - 20) {
+            dropdown.style.top = 'auto';
+            dropdown.style.bottom = 'calc(100% + 6px)';
+        } else {
+            dropdown.style.top = 'calc(100% + 6px)';
+            dropdown.style.bottom = 'auto';
+        }
+    };
+
+    trigger.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const isOpen = dropdown.classList.contains('open');
+        if (!isOpen && configPanel) configPanel.classList.add('dropdown-open');
+        if (isOpen && configPanel) configPanel.classList.remove('dropdown-open');
+        dropdown.classList.toggle('open', !isOpen);
+        trigger.classList.toggle('open', !isOpen);
+        trigger.setAttribute('aria-expanded', String(!isOpen));
+
+        if (!isOpen) {
+            requestAnimationFrame(repositionDropdown);
+        }
+    });
+
+    dropdown.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const item = e.target.closest('.tk-placement-item');
+        if (!item) return;
+        const selectedPlacementId = item.dataset.placementId;
+        syncPlacementUI(selectedPlacementId);
+        dropdown.classList.remove('open');
+        trigger.classList.remove('open');
+        trigger.setAttribute('aria-expanded', 'false');
+        if (configPanel) configPanel.classList.remove('dropdown-open');
+
+        const placementState = getInjectionPlacementState({ ...getSettings(), injectPlacement: selectedPlacementId });
+        saveSetting('injectPlacement', placementState.placementId);
+        saveSetting('injectPosition', placementState.position);
+        saveSetting('injectDepth', placementState.depth);
+    });
+
+    if (depthInput) {
+        depthInput.addEventListener('input', () => {
+            const selectedPlacement = document.querySelector('.tk-placement-item.selected')?.dataset.placementId || 'message_depth';
+            syncPlacementUI(selectedPlacement);
+        });
+    }
+}
+
+function getSelectedConnectionProfile(profileId = getSettings().connectionProfile) {
+    if (!profileId || profileId === '__current__') return null;
+    return getConnectionProfiles().find(profile => profile.id === profileId) || null;
+}
+
+function getModelSelectElementForProfile(profile) {
+    const modelSelectMap = [
+        { id: 'generic_model_textgenerationwebui', api: 'textgenerationwebui', type: 'generic' },
+        { id: 'custom_model_textgenerationwebui', api: 'textgenerationwebui', type: 'ooba' },
+        { id: 'model_togetherai_select', api: 'textgenerationwebui', type: 'togetherai' },
+        { id: 'openrouter_model', api: 'textgenerationwebui', type: 'openrouter' },
+        { id: 'model_infermaticai_select', api: 'textgenerationwebui', type: 'infermaticai' },
+        { id: 'model_dreamgen_select', api: 'textgenerationwebui', type: 'dreamgen' },
+        { id: 'mancer_model', api: 'textgenerationwebui', type: 'mancer' },
+        { id: 'vllm_model', api: 'textgenerationwebui', type: 'vllm' },
+        { id: 'aphrodite_model', api: 'textgenerationwebui', type: 'aphrodite' },
+        { id: 'ollama_model', api: 'textgenerationwebui', type: 'ollama' },
+        { id: 'tabby_model', api: 'textgenerationwebui', type: 'tabby' },
+        { id: 'llamacpp_model', api: 'textgenerationwebui', type: 'llamacpp' },
+        { id: 'featherless_model', api: 'textgenerationwebui', type: 'featherless' },
+        { id: 'model_openai_select', api: 'openai', source: 'openai' },
+        { id: 'model_claude_select', api: 'openai', source: 'claude' },
+        { id: 'model_openrouter_select', api: 'openai', source: 'openrouter' },
+        { id: 'model_ai21_select', api: 'openai', source: 'ai21' },
+        { id: 'model_google_select', api: 'openai', source: 'makersuite' },
+        { id: 'model_vertexai_select', api: 'openai', source: 'vertexai' },
+        { id: 'model_mistralai_select', api: 'openai', source: 'mistralai' },
+        { id: 'custom_model_id', api: 'openai', source: 'custom' },
+        { id: 'model_cohere_select', api: 'openai', source: 'cohere' },
+        { id: 'model_perplexity_select', api: 'openai', source: 'perplexity' },
+        { id: 'model_groq_select', api: 'openai', source: 'groq' },
+        { id: 'model_chutes_select', api: 'openai', source: 'chutes' },
+        { id: 'model_siliconflow_select', api: 'openai', source: 'siliconflow' },
+        { id: 'model_electronhub_select', api: 'openai', source: 'electronhub' },
+        { id: 'model_nanogpt_select', api: 'openai', source: 'nanogpt' },
+        { id: 'model_deepseek_select', api: 'openai', source: 'deepseek' },
+        { id: 'model_aimlapi_select', api: 'openai', source: 'aimlapi' },
+        { id: 'model_xai_select', api: 'openai', source: 'xai' },
+        { id: 'model_pollinations_select', api: 'openai', source: 'pollinations' },
+        { id: 'model_moonshot_select', api: 'openai', source: 'moonshot' },
+        { id: 'model_fireworks_select', api: 'openai', source: 'fireworks' },
+        { id: 'model_cometapi_select', api: 'openai', source: 'cometapi' },
+        { id: 'model_navy_select', api: 'openai', source: 'navy' },
+        { id: 'model_routeway_select', api: 'openai', source: 'routeway' },
+        { id: 'model_zai_select', api: 'openai', source: 'zai' },
+        { id: 'model_novel_select', api: 'novel' },
+        { id: 'horde_model', api: 'koboldhorde' },
+    ];
+
+    if (!profile?.api) return null;
+
+    const apiConfig = CONNECT_API_MAP[String(profile.api).toLowerCase()];
+    const selectedApi = apiConfig?.selected || profile.api;
+    const selectedSource = apiConfig?.source || null;
+    const selectedType = apiConfig?.type || null;
+
+    const mapping = modelSelectMap.find(entry =>
+        entry.api === selectedApi &&
+        (entry.source ? entry.source === selectedSource : true) &&
+        (entry.type ? entry.type === selectedType : true),
+    );
+
+    return mapping ? document.getElementById(mapping.id) : null;
+}
+
+function readModelsFromControl(control, profile = null) {
+    if (!control) return [];
+
+    const providerLabel = profile?.name || profile?.api || '';
+    if (control.tagName === 'SELECT') {
+        const models = [];
+        control.querySelectorAll('option').forEach(opt => {
+            const value = String(opt.value || '').trim();
+            const name = String(opt.textContent || '').trim();
+            if (!value || !name) return;
+            models.push({ id: value, name, provider: providerLabel });
+        });
+        return models;
+    }
+
+    const value = String(control.value || '').trim();
+    return value ? [{ id: value, name: value, provider: providerLabel }] : [];
+}
+
+function getCurrentModelFromDom() {
+    const activeProfile = getSelectedConnectionProfile(getCurrentConnectionProfileId());
+    const activeControl = getModelSelectElementForProfile(activeProfile);
+    const activeValue = String(activeControl?.value || '').trim();
+    if (activeValue) {
+        return activeValue;
+    }
+
+    const fallbackControl = document.getElementById('model_openai_select') ||
+        document.getElementById('model_togetherai_select') ||
+        document.querySelector('[id*="model"][id*="select"]');
+
+    return String(fallbackControl?.value || '').trim();
+}
+
+function getCurrentConnectionProfileId() {
+    return extension_settings.connectionManager?.selectedProfile || null;
+}
+
+function getDefaultModelForSelection(profileId = getSettings().connectionProfile) {
+    if (!profileId || profileId === '__current__') {
+        return getSettings().model || getCurrentModelFromDom() || '';
+    }
+
+    const profile = getSelectedConnectionProfile(profileId);
+    if (!profile) {
+        return '';
+    }
+
+    if (profile.id === getCurrentConnectionProfileId()) {
+        return String(profile.model || getCurrentModelFromDom() || '').trim();
+    }
+
+    return String(profile.model || '').trim();
+}
+
+function getSecretKeyForProfile(profile) {
+    const api = String(profile?.api || '').toLowerCase();
+    const secretKeyMap = {
+        openai: SECRET_KEYS.OPENAI,
+        claude: SECRET_KEYS.CLAUDE,
+        openrouter: SECRET_KEYS.OPENROUTER,
+        ai21: SECRET_KEYS.AI21,
+        makersuite: SECRET_KEYS.MAKERSUITE,
+        vertexai: SECRET_KEYS.VERTEXAI,
+        mistralai: SECRET_KEYS.MISTRALAI,
+        custom: SECRET_KEYS.CUSTOM,
+        cohere: SECRET_KEYS.COHERE,
+        perplexity: SECRET_KEYS.PERPLEXITY,
+        groq: SECRET_KEYS.GROQ,
+        chutes: SECRET_KEYS.CHUTES,
+        electronhub: SECRET_KEYS.ELECTRONHUB,
+        navy: SECRET_KEYS.NAVY,
+        nanogpt: SECRET_KEYS.NANOGPT,
+        deepseek: SECRET_KEYS.DEEPSEEK,
+        aimlapi: SECRET_KEYS.AIMLAPI,
+        xai: SECRET_KEYS.XAI,
+        pollinations: null,
+        moonshot: SECRET_KEYS.MOONSHOT,
+        fireworks: SECRET_KEYS.FIREWORKS,
+        siliconflow: SECRET_KEYS.SILICONFLOW,
+        routeway: SECRET_KEYS.ROUTEWAY,
+        zai: SECRET_KEYS.ZAI,
+    };
+
+    return secretKeyMap[api] ?? null;
+}
+
+function getModelsEndpointForProfile(profile) {
+    const api = String(profile?.api || '').toLowerCase();
+    const endpointMap = {
+        openai: 'https://api.openai.com/v1/models',
+        claude: 'https://api.anthropic.com/v1/models',
+        openrouter: 'https://openrouter.ai/api/v1/models',
+        ai21: 'https://api.ai21.com/studio/v1/models',
+        makersuite: 'https://generativelanguage.googleapis.com/v1beta/models',
+        mistralai: 'https://api.mistral.ai/v1/models',
+        custom: profile?.['api-url'] ? `${String(profile['api-url']).replace(/\/$/, '')}/models` : '',
+        cohere: 'https://api.cohere.ai/v1/models',
+        perplexity: 'https://api.perplexity.ai/models',
+        groq: 'https://api.groq.com/openai/v1/models',
+        chutes: 'https://llm.chutes.ai/v1/models',
+        electronhub: 'https://api.electronhub.ai/v1/models',
+        navy: 'https://api.navy/v1/models',
+        nanogpt: 'https://nano-gpt.com/api/v1/models?detailed=true',
+        deepseek: 'https://api.deepseek.com/models',
+        aimlapi: 'https://api.aimlapi.com/v1/models',
+        xai: 'https://api.x.ai/v1/models',
+        pollinations: 'https://text.pollinations.ai/models',
+        moonshot: 'https://api.moonshot.ai/v1/models',
+        fireworks: 'https://api.fireworks.ai/inference/v1/models',
+        siliconflow: 'https://api.siliconflow.com/v1/models',
+        routeway: 'https://api.routeway.ai/v1/models',
+        zai: 'https://api.z.ai/api/paas/v4/models',
+    };
+
+    return endpointMap[api] || '';
+}
+
+function normalizeFetchedModels(profile, payload) {
+    const api = String(profile?.api || '').toLowerCase();
+    const provider = profile?.name || profile?.api || '';
+    const sourceList = Array.isArray(payload?.data)
+        ? payload.data
+        : Array.isArray(payload?.models)
+            ? payload.models
+            : Array.isArray(payload)
+                ? payload
+                : [];
+
+    let models = sourceList.map(model => {
+        const id = model?.id || model?.name || model?.model || model?.slug;
+        if (!id) return null;
+        return {
+            id: String(id),
+            name: String(model?.name || id),
+            provider,
+        };
+    }).filter(Boolean);
+
+    if (api === 'fireworks') {
+        models = models.filter((model, index) => sourceList[index]?.supports_chat !== false);
+    }
+
+    if (api === 'aimlapi') {
+        models = models.filter((model, index) => {
+            const type = sourceList[index]?.type;
+            return !type || type === 'chat-completion';
+        });
+    }
+
+    if (api === 'electronhub') {
+        models = models.filter((model, index) => {
+            const endpoints = sourceList[index]?.endpoints;
+            return !Array.isArray(endpoints) || endpoints.includes('/v1/chat/completions');
+        });
+    }
+
+    if (api === 'navy') {
+        models = models.filter((model, index) => {
+            const endpoint = sourceList[index]?.endpoint;
+            return !endpoint || endpoint === '/v1/chat/completions';
+        });
+    }
+
+    return models;
+}
+
+async function fetchModelsForProfile(profile) {
+    const cacheKey = `${profile.id}:${profile['secret-id'] || ''}:${profile.model || ''}`;
+    if (modelCatalogCache.has(cacheKey)) {
+        return modelCatalogCache.get(cacheKey);
+    }
+
+    // Route through ST backend to avoid CORS — same endpoint ST uses for its own model lists
+    try {
+        const apiConfig = CONNECT_API_MAP[String(profile.api || '').toLowerCase()];
+        const chatCompletionSource = apiConfig?.source || profile.api;
+
+        const body = {
+            chat_completion_source: chatCompletionSource,
+        };
+        // Pass custom URL if profile has one
+        if (profile['api-url']) {
+            body.custom_url = profile['api-url'];
+        }
+        if (oai_settings?.reverse_proxy) {
+            body.reverse_proxy = oai_settings.reverse_proxy;
+            body.proxy_password = oai_settings.proxy_password;
+        }
+
+        const response = await fetch('/api/backends/chat-completions/status', {
+            method: 'POST',
+            headers: getRequestHeaders(),
+            body: JSON.stringify(body),
+            signal: AbortSignal.timeout(10000),
+        });
+
+        if (!response.ok) {
+            return [];
+        }
+
+        const responseData = await response.json();
+        const provider = profile.name || profile.api || '';
+
+        if (responseData.data && Array.isArray(responseData.data)) {
+            const models = responseData.data.map(m => ({
+                id: String(m.id || m.name || ''),
+                name: String(m.name || m.id || ''),
+                provider,
+            })).filter(m => m.id);
+            if (models.length > 0) {
+                modelCatalogCache.set(cacheKey, models);
+            }
+            return models;
+        }
+    } catch (error) {
+    }
+
+    // Fallback: try direct fetch (works for CORS-friendly APIs like OpenRouter)
+    const endpoint = getModelsEndpointForProfile(profile);
+    if (endpoint) {
+        try {
+            const secretKey = getSecretKeyForProfile(profile);
+            const secretValue = secretKey && profile['secret-id'] ? await findSecret(secretKey, profile['secret-id']) : null;
+
+            const headers = {};
+            if (secretValue) {
+                headers.Authorization = `Bearer ${secretValue}`;
+            }
+
+            const response = await fetch(endpoint, {
+                method: 'GET',
+                headers,
+                signal: AbortSignal.timeout(8000),
+            });
+
+            if (response.ok) {
+                const payload = await response.json();
+                const models = normalizeFetchedModels(profile, payload);
+                if (models.length > 0) {
+                    modelCatalogCache.set(cacheKey, models);
+                    return models;
+                }
+            }
+        } catch (e) {
+        }
+    }
+
+    return [];
+}
+
+async function getAvailableModels(profileId = getSettings().connectionProfile) {
+    const profile = getSelectedConnectionProfile(profileId);
+
+    if (profile) {
+        const currentProfileId = getCurrentConnectionProfileId();
+        const isCurrentConnectionProfile = profile.id === currentProfileId;
+
+        // Strategy 1: Read from the DOM model <select> for this profile's provider
+        const profileControl = getModelSelectElementForProfile(profile);
+
+        if (profileControl) {
+            const profileModels = readModelsFromControl(profileControl, profile);
+            if (profileModels.length > 0) {
+                if (profile.model && !profileModels.some(model => model.id === profile.model)) {
+                    profileModels.unshift({ id: profile.model, name: profile.model, provider: profile.name || profile.api || '' });
+                }
+                return profileModels;
+            }
+        }
+
+        // Strategy 2: Fetch through ST backend proxy (avoids CORS)
+        const fetchedModels = await fetchModelsForProfile(profile);
+        if (fetchedModels.length > 0) {
+            if (profile.model && !fetchedModels.some(model => model.id === profile.model)) {
+                fetchedModels.unshift({ id: profile.model, name: profile.model, provider: profile.name || profile.api || '' });
+            }
+            return fetchedModels;
+        }
+
+        // Strategy 3: Use profile's saved model
+        if (profile.model) {
+            return [{ id: profile.model, name: profile.model, provider: profile.name || profile.api || '' }];
+        }
+
+        // Strategy 4: Read from whichever model select is currently populated
+        const domModels = readModelsFromAnySelect();
+        if (domModels.length > 0) return domModels;
+
+        return [];
+    }
+
+    // No specific profile — read from the currently active model select
+    const domModels = readModelsFromAnySelect();
+    if (domModels.length > 0) return domModels;
+
+    // Hardcoded fallback
     return [
         { id: 'gpt-4o-mini', name: 'gpt-4o-mini', provider: 'OpenAI' },
         { id: 'gpt-4.1-nano', name: 'gpt-4.1-nano', provider: 'OpenAI' },
@@ -1037,13 +1958,38 @@ function getAvailableModels() {
     ];
 }
 
+/** Scan all model select elements on the page and return models from whichever has entries */
+function readModelsFromAnySelect() {
+    const selectIds = [
+        'model_navy_select', 'model_openai_select', 'model_openrouter_select',
+        'model_claude_select', 'model_google_select', 'model_mistralai_select',
+        'model_deepseek_select', 'model_groq_select', 'model_chutes_select',
+        'model_electronhub_select', 'model_togetherai_select', 'model_perplexity_select',
+        'model_ai21_select', 'model_cohere_select', 'model_nanogpt_select',
+        'model_xai_select', 'model_fireworks_select', 'model_siliconflow_select',
+        'model_aimlapi_select', 'model_moonshot_select', 'model_routeway_select',
+        'model_zai_select', 'model_novel_select', 'custom_model_id',
+        'openrouter_model', 'mancer_model', 'vllm_model', 'ollama_model',
+    ];
+    for (const id of selectIds) {
+        const el = document.getElementById(id);
+        if (!el) continue;
+        const models = readModelsFromControl(el);
+        if (models.length > 0) {
+            return models;
+        }
+    }
+    return [];
+}
+
 function getConnectionProfiles() {
     try {
         if (extension_settings.connectionManager && extension_settings.connectionManager.profiles) {
-            return extension_settings.connectionManager.profiles;
+            const profiles = extension_settings.connectionManager.profiles;
+            return profiles;
         }
     } catch (e) {
-        console.debug('Threadkeeper: Could not read connection profiles', e);
+        // Connection manager not available
     }
     return [];
 }
@@ -1052,13 +1998,77 @@ function getConnectionProfiles() {
 // EVENT HANDLERS
 // ═══════════════════════════════════════════════════════════════════
 
-function attachEventListeners() {
-    // Overlay tap-away to close
+function handleOverlayDismiss(event) {
     const overlay = document.getElementById('threadkeeper-overlay');
+    const terminal = document.getElementById('threadkeeper-terminal');
+
+    if (!overlay || !terminal || !isTerminalOpen) return;
+
+    // Only close when the interaction lands on the backdrop itself,
+    // not on any element inside the terminal UI.
+    if (event.target === overlay) {
+        closeTerminal();
+    }
+}
+
+function syncUIFromSettings() {
+    const settings = getSettings();
+
+    // Sync all UI elements from settings
+    const connection = document.getElementById('tk-cfg-connection');
+    if (connection) connection.value = settings.connectionProfile || '__current__';
+
+    const temp = document.getElementById('tk-cfg-temp');
+    if (temp) temp.value = String((settings.temperature || 0.2) * 10);
+
+    const maxFacts = document.getElementById('tk-cfg-maxfacts');
+    if (maxFacts) maxFacts.value = String(settings.maxFacts || 100);
+
+    const autoScan = document.getElementById('tk-cfg-autoscan');
+    if (autoScan) autoScan.value = String(settings.autoScanInterval || 10);
+
+    const crossChat = document.getElementById('tk-cfg-crosschat');
+    if (crossChat) crossChat.checked = settings.crossChatPinned !== false;
+
+    const autoPin = document.getElementById('tk-cfg-autopin');
+    if (autoPin) autoPin.checked = settings.autoPin === true;
+
+    const hidden = document.getElementById('tk-cfg-hidden');
+    if (hidden) hidden.checked = settings.scanHidden === true;
+
+    const depth = document.getElementById('tk-cfg-depth');
+    if (depth) depth.value = String(settings.messageDepth || 4);
+
+    // Sync model display
+    const modelDisplay = document.getElementById('tk-mp-selected');
+    if (modelDisplay) {
+        modelDisplay.textContent = settings.model || 'Use default model';
+        modelDisplay.dataset.modelId = settings.model || '';
+    }
+
+    // Sync budget pills
+    const budgetPills = document.querySelectorAll('#tk-cfg-budget .tk-pill');
+    budgetPills.forEach(pill => {
+        pill.classList.toggle('active', pill.dataset.v === (settings.injectBudget || 'medium'));
+    });
+
+}
+
+function attachEventListeners() {
+    const overlay = document.getElementById('threadkeeper-overlay');
+    const terminal = document.getElementById('threadkeeper-terminal');
+
     if (overlay) {
-        overlay.addEventListener('click', (e) => {
-            if (e.target === overlay) closeTerminal();
-        });
+        // Handle both pointer and click paths so taps reliably dismiss the
+        // terminal across mouse and touch input.
+        overlay.addEventListener('pointerdown', handleOverlayDismiss);
+        overlay.addEventListener('click', handleOverlayDismiss);
+    }
+
+    // Prevent terminal interactions from bubbling into the backdrop handler.
+    if (terminal) {
+        terminal.addEventListener('pointerdown', (e) => e.stopPropagation());
+        terminal.addEventListener('click', (e) => e.stopPropagation());
     }
 
     // Close button
@@ -1110,8 +2120,12 @@ function attachEventListeners() {
             const bar = document.getElementById('tk-progress-bar');
             if (progress) progress.classList.add('active');
 
-            // Clear non-pinned fact lines from terminal
+            // Collapse non-pinned fact lines from terminal.
+            // Pinned elements stay visible — they remain in memory and won't
+            // be re-added via addFactLine (deduped from extraction prompt).
+            const pinnedIds = new Set(getPinnedFacts().map(f => String(f.id)));
             document.querySelectorAll('.tk-fact').forEach(el => {
+                if (pinnedIds.has(el.dataset.factId)) return;
                 el.style.transition = 'all 0.2s ease';
                 el.style.opacity = '0';
                 el.style.height = '0';
@@ -1132,6 +2146,25 @@ function attachEventListeners() {
             if (progress) progress.classList.remove('active');
             reextractBtn.classList.remove('running');
             document.getElementById('tk-extract-btn')?.classList.remove('running');
+        });
+    }
+
+    // Clear unpinned facts button
+    const clearFactsBtn = document.getElementById('tk-clear-facts-btn');
+    if (clearFactsBtn) {
+        clearFactsBtn.addEventListener('click', async () => {
+            const regularFacts = getFacts().filter(f => !f.pinned);
+            if (regularFacts.length === 0) {
+                addTerminalLine('<span class="tk-dim">No unpinned facts to clear.</span>');
+                addCursorLine();
+                return;
+            }
+
+            clearNonPinnedFacts();
+            await injectFacts();
+            refreshTerminalContent();
+            addTerminalLine(`<span class="tk-success">✓ Cleared ${regularFacts.length} unpinned fact${regularFacts.length === 1 ? '' : 's'}</span>`);
+            addCursorLine();
         });
     }
 
@@ -1213,12 +2246,27 @@ function attachEventListeners() {
     }
 
     // Close model dropdown on outside click
-    document.addEventListener('click', () => {
-        const dropdown = document.getElementById('tk-mp-dropdown');
-        const trigger = document.getElementById('tk-mp-trigger');
-        if (dropdown) dropdown.classList.remove('open');
-        if (trigger) trigger.classList.remove('open');
-    });
+    document.addEventListener('click', handleGlobalClick);
+}
+
+function handleGlobalClick(e) {
+    const cpanel = document.querySelector('.tk-config-panel');
+    const dropdown = document.getElementById('tk-mp-dropdown');
+    const trigger = document.getElementById('tk-mp-trigger');
+    if (dropdown && trigger && !dropdown.contains(e.target) && !trigger.contains(e.target)) {
+        dropdown.classList.remove('open');
+        trigger.classList.remove('open');
+        if (cpanel) cpanel.classList.remove('dropdown-open');
+    }
+
+    const placementDropdown = document.getElementById('tk-placement-dropdown');
+    const placementTrigger = document.getElementById('tk-placement-trigger');
+    if (placementDropdown && placementTrigger && !placementDropdown.contains(e.target) && !placementTrigger.contains(e.target)) {
+        placementDropdown.classList.remove('open');
+        placementTrigger.classList.remove('open');
+        placementTrigger.setAttribute('aria-expanded', 'false');
+        if (cpanel) cpanel.classList.remove('dropdown-open');
+    }
 }
 
 function applyFilter() {
@@ -1238,7 +2286,6 @@ function onNewMessage() {
     messagesSinceLastScan++;
 
     if (settings.autoScanInterval > 0 && messagesSinceLastScan >= settings.autoScanInterval) {
-        console.log(`Threadkeeper: Auto-scanning (${messagesSinceLastScan} messages since last scan)`);
         runExtraction(false).then(() => {
             if (isTerminalOpen) refreshTerminalContent();
         });
@@ -1251,6 +2298,7 @@ function onNewMessage() {
 
 async function onChatChanged() {
     messagesSinceLastScan = 0;
+    restorePinnedFromGlobal();
     await injectFacts();
     if (isTerminalOpen) refreshTerminalContent();
 }
@@ -1300,12 +2348,17 @@ function createMenuButton() {
     const btn = document.createElement('div');
     btn.id = 'threadkeeper-menu-item';
     btn.className = 'menu_button menu_button_icon interactable';
+    btn.style.display = 'flex';
+    btn.style.alignItems = 'center';
+    btn.style.gap = '10px';
+    btn.style.background = 'transparent';
+    btn.style.border = '0';
+    btn.style.boxShadow = 'none';
     btn.innerHTML = `
-        <span style="display:inline-flex;align-items:center;width:20px;justify-content:center;">
+        <span class="tk-menu-icon">
             ${MEMORY_ORB_SVG_SMALL}
         </span>
-        <span>Threadkeeper</span>
-        <span class="tk-new-badge">NEW</span>`;
+        <span class="tk-menu-label">ThreadKeeper</span>`;
     btn.addEventListener('click', () => {
         if (isTerminalOpen) {
             closeTerminal();
@@ -1340,12 +2393,12 @@ function registerSlashCommands() {
     try {
         SlashCommandParser.addCommandObject(SlashCommand.fromProps({
             name: 'threadkeeper',
-            callback: async (args) => {
-                const subcommand = args?.unnamed?.[0] || 'open';
+            callback: async (namedArgs, value) => {
+                const subcommand = (typeof value === 'string' ? value.trim() : '') || 'open';
                 switch (subcommand) {
                     case 'open':
                         openTerminal();
-                        return 'Threadkeeper opened.';
+                        return 'ThreadKeeper opened.';
                     case 'extract':
                         await runExtraction(false);
                         return `Extracted facts. Total: ${getFacts().length}`;
@@ -1362,11 +2415,26 @@ function registerSlashCommands() {
                         return 'Usage: /threadkeeper [open|extract|reextract|facts|clear]';
                 }
             },
-            helpString: 'Threadkeeper memory management. Subcommands: open, extract, reextract, facts, clear',
+            helpString: 'ThreadKeeper memory management. Subcommands: open, extract, reextract, facts, clear',
         }));
     } catch (e) {
-        console.debug('Threadkeeper: Could not register slash commands', e);
     }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// CLEANUP / UNLOAD
+// ═══════════════════════════════════════════════════════════════════
+
+function cleanup() {
+    eventSource.off(event_types.CHAT_CHANGED, onChatChanged);
+    eventSource.off(event_types.CHARACTER_MESSAGE_RENDERED, onNewMessage);
+    eventSource.off(event_types.USER_MESSAGE_RENDERED, onNewMessage);
+    document.removeEventListener('click', handleGlobalClick);
+    mobileStyleLink?.remove();
+    mobileStyleLink = null;
+    document.getElementById('threadkeeper-overlay')?.remove();
+    document.querySelectorAll('#threadkeeper-menu-item').forEach(el => el.remove());
+    setExtensionPrompt(EXTENSION_PROMPT_KEY, '', extension_prompt_types.IN_CHAT, 0);
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -1374,8 +2442,21 @@ function registerSlashCommands() {
 // ═══════════════════════════════════════════════════════════════════
 
 jQuery(async function () {
-    // Load settings
+    // Load settings and persist to ensure they're saved on first load
     loadSettings();
+    await saveSettings();
+
+    // Load mobile stylesheet — detect extension path from our main CSS link
+    try {
+        const mainCssLink = document.querySelector('link[href*="ThreadKeeper"][rel="stylesheet"]');
+        const basePath = mainCssLink ? mainCssLink.href.replace(/\/[^/]*$/, '') : `/scripts/extensions/third-party/${MODULE_NAME}`;
+        mobileStyleLink = document.createElement('link');
+        mobileStyleLink.rel = 'stylesheet';
+        mobileStyleLink.type = 'text/css';
+        mobileStyleLink.href = `${basePath}/mobile-style.css`;
+        document.head.appendChild(mobileStyleLink);
+    } catch (e) {
+    }
 
     // Inject terminal HTML into the page
     const terminalHtml = buildTerminalHTML();
@@ -1387,7 +2468,6 @@ jQuery(async function () {
     // Inject menu button into Push Modal (with retry for dynamic loading)
     const tryInject = () => {
         try { injectMenuButton(); } catch (e) {
-            console.debug('Threadkeeper: Menu injection will retry', e);
         }
     };
 
@@ -1401,11 +2481,13 @@ jQuery(async function () {
     eventSource.on(event_types.CHARACTER_MESSAGE_RENDERED, onNewMessage);
     eventSource.on(event_types.USER_MESSAGE_RENDERED, onNewMessage);
 
+    // Clean up when the page unloads (extension disabled without reload, or page close)
+    window.addEventListener('beforeunload', cleanup, { once: true });
+
     // Register slash commands
     registerSlashCommands();
 
     // Initial injection if chat already loaded
     await injectFacts();
 
-    console.log('⌬ Threadkeeper v1.0 loaded');
 });
