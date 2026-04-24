@@ -10,38 +10,40 @@ Built for [DreamTavern](https://github.com/selinawynters-ops/ST---ThreadKeeper) 
 
 ## ✨ What It Does
 
-When you roleplay for hundreds of messages, your LLM eventually loses track of earlier details — character traits, relationship dynamics, plot points, important items. Threadkeeper fixes this by:
+When you roleplay for hundreds of messages, your LLM eventually loses track of earlier details like character traits 🎭, relationship dynamics 💞, plot points 📖, important items 🗝️, and locations 🗺️. ThreadKeeper fixes this by:
 
-1. **Scanning** your chat messages in batches
-2. **Extracting** key facts using a fast, cheap LLM call
-3. **Injecting** those facts into every prompt automatically
+1. **Scanning** your chat messages in batches 🔍
+2. **Extracting** key facts using a fast, cheap LLM call 🧠
+3. **Injecting** those facts into every prompt automatically 💉
 
 The result: your model "remembers" things from 200 messages ago as if they just happened.
 
-### How much does it cost?
+### How much does it cost? 💸
 
-Almost nothing. A typical scan of 100 messages uses a fast model (like gpt-4o-mini or claude-3-haiku) and costs less than $0.01. The extracted facts take up ~400 tokens in your prompt — far less than the 2,000+ tokens the raw messages would have used.
+Almost nothing. A typical scan of 100 messages uses a fast model like `gpt-4o-mini` or `claude-3-haiku` and costs less than $0.01. The extracted facts usually take up around 400 tokens in your prompt, far less than the raw chat would have used.
 
 ---
 
 ## 📦 Installation
 
-### Option A: From GitHub (Recommended)
+### Option A: From GitHub (Recommended) 🌐
 
-1. Open SillyTavern
+1. Open SillyTavern or DreamTavern
 2. Go to **Extensions** → **Install Extension**
 3. Paste this repo URL: `https://github.com/selinawynters-ops/ST---ThreadKeeper/`
 4. Click **Install**
 5. Enable the extension
-6. **Threadkeeper** appears in your Push Modal menu ✨
+6. **ThreadKeeper** appears in your Push Modal menu ✨
 
-### Option B: Manual Install
+### Option B: Manual Install 🛠️
 
 1. Download or clone this repo
-2. Copy the `Threadkeeper` folder into:
-   ```
-   SillyTavern/public/scripts/extensions/third-party/Threadkeeper/
-   ```
+2. Copy the `ST---ThreadKeeper` folder into:
+
+```text
+SillyTavern/data/default-user/extensions/ST---ThreadKeeper/
+```
+
 3. Restart SillyTavern
 4. Enable the extension in **Extensions** → **Manage Extensions**
 
@@ -49,20 +51,20 @@ Almost nothing. A typical scan of 100 messages uses a fast model (like gpt-4o-mi
 
 ## 🎮 How to Use
 
-### Opening Threadkeeper
+### Opening ThreadKeeper
 
-- Click **Threadkeeper** in the Push Modal section of the left sidebar menu
+- Click **ThreadKeeper** in the Push Modal section of the left sidebar menu
 - Or type `/threadkeeper open` in the chat
 
 ### The Terminal
 
-Threadkeeper opens as a terminal-style popup with a familiar feel:
+ThreadKeeper opens as a terminal-style popup with a familiar feel:
 
-```
+```text
 ┌─────────────────────────────────────────┐
 │ ● ● ●   🔮  threadkeeper · dreamtavern │
 │─────────────────────────────────────────│
-│ ▶ extract  ⟲ re-extract  ◉ preview  ⚙  │
+│ ▶ extract  ⟳ re-extract  ◉ preview  ⚙  │
 │─────────────────────────────────────────│
 │ $ threadkeeper v1.0                     │
 │ Loaded chat: Luna · 142 messages        │
@@ -79,10 +81,10 @@ Threadkeeper opens as a terminal-style popup with a familiar feel:
 ### Toolbar Commands
 
 | Button | What it does |
-|--------|-------------|
-| **▶ extract** | Scan new messages since last extraction (incremental) |
-| **⟲ re-extract** | Re-scan ALL messages from the beginning (keeps pinned facts) |
-| **◉ preview** | Show exactly what gets injected into your prompt |
+|--------|--------------|
+| **▶ extract** | Scan new messages since last extraction (incremental) ⚡ |
+| **⟳ re-extract** | Re-scan all messages from the beginning while keeping pinned facts 🔄 |
+| **◉ preview** | Show exactly what gets injected into your prompt 👀 |
 | **⚙ settings** | Open the settings panel |
 
 ### Fact Categories
@@ -90,7 +92,7 @@ Threadkeeper opens as a terminal-style popup with a familiar feel:
 Each extracted fact is tagged with a category:
 
 | Tag | Category | Color | What it captures |
-|-----|----------|-------|-----------------|
+|-----|----------|-------|------------------|
 | `chr` | Character | Purple | Traits, appearance, abilities, personality |
 | `rel` | Relationship | Pink | Bonds, trust, conflict, romantic dynamics |
 | `evt` | Event | Cyan | Key plot events, turning points |
@@ -104,73 +106,73 @@ Use the filter buttons in the toolbar to show only certain categories.
 
 Hover over any fact to see action buttons:
 
-- **📌 Pin** — Pinned facts are *always* remembered, even during re-extraction. They get priority prompt space.
+- **📌 Pin** — Pinned facts are always remembered, even during re-extraction. They get priority prompt space.
 - **↗ Source** — Scrolls to and highlights the original chat message where the fact was found.
-- **✕ Delete** — Remove a fact you don't need.
+- **✕ Delete** — Remove a fact you do not need.
 
 ### Slash Commands
 
 Type these in the SillyTavern chat input:
 
-```
+```text
 /threadkeeper open       — Open the terminal
 /threadkeeper extract    — Run incremental extraction
 /threadkeeper reextract  — Run full re-extraction
 /threadkeeper facts      — List all current facts
 /threadkeeper clear      — Clear all non-pinned facts
+/threadkeeper wipe       — Wipe ThreadKeeper data from settings and saved chats
 ```
 
 ---
 
 ## ⚙ Settings
 
-Click **⚙ settings** in the toolbar to configure Threadkeeper. Everything is in plain language — no coding knowledge needed.
+Click **⚙ settings** in the toolbar to configure ThreadKeeper. Everything is written in plain language.
 
-### 🔗 Connection
+### 🔌 Connection
 
 | Setting | What it means |
-|---------|--------------|
-| **Use connection from** | Pick one of your saved connection profiles. The API key is read automatically — you never need to re-enter it. |
-| **Model for scanning** | Choose which model extracts facts. A fast, cheap model is best (like gpt-4o-mini). Type to search the list. |
-| **Accuracy** | Slider from "Precise" to "Creative". Lower = facts are more literal and exact. Higher = the model interprets more freely. Recommended: keep it toward Precise. |
+|---------|----------------|
+| **Use connection from** | Pick one of your saved connection profiles. The API key is read automatically, so you do not need to re-enter it. |
+| **Model for scanning** | Choose which model extracts facts. A fast, cheap model is usually best, like `gpt-4o-mini`. |
+| **Accuracy** | Slider from "Precise" to "Creative". Lower means facts are more literal and exact. Higher means the model interprets more freely. |
 
 ### 🧠 Memory
 
 | Setting | What it means |
-|---------|--------------|
-| **Max remembered facts** | The most facts Threadkeeper will keep. When the limit is reached, the oldest non-pinned facts are replaced. Default: 100. |
+|---------|----------------|
+| **Max remembered facts** | The most facts ThreadKeeper will keep. When the limit is reached, the oldest non-pinned facts are replaced. Default: 100. |
 | **How much prompt space to use** | How many tokens the facts take up in your prompt. Small (~250), Medium (~500), or Large (~800). |
 | **Keep pinned facts across chats** | When enabled, pinned facts carry over when you start a new chat with the same character. |
 
 ### 🔍 Scanning
 
 | Setting | What it means |
-|---------|--------------|
-| **Auto-scan every __ messages** | Automatically extract new facts after this many messages. Set to 0 for manual-only. Default: 10. |
-| **Include hidden messages** | Also scan messages that are hidden from the chat view (system messages, etc). |
+|---------|----------------|
+| **Auto-scan every __ messages** | Automatically extract new facts after this many messages. Set to `0` for manual-only mode. |
+| **Include hidden messages** | Also scan messages hidden from the chat view, including some system messages. |
 
 ### ⚙ Advanced
 
 | Setting | What it means |
-|---------|--------------|
-| **Injection position** | Where facts appear in the prompt. "In-chat at depth" (default) or "After story string". |
+|---------|----------------|
+| **Injection position** | Where facts appear in the prompt. |
 | **Injection depth** | How many messages from the bottom the facts are inserted. Default: 4. |
 
-Don't forget to click **💾 Save** after changing settings!
+Do not forget to click **Save** after changing settings. 💾
 
 ---
 
-## 🧪 Demo
+## 🎬 Demo
 
+Open `demo.html` in any browser to see a fully interactive preview of ThreadKeeper's UI without launching SillyTavern.
 
-
-Open `demo.html` in any browser to see a fully interactive preview of Threadkeeper's UI — no SillyTavern installation required. The demo simulates:
-
-- The terminal popup with sample facts
-- Extract and re-extract animations
-- Fact filtering, pinning, and deletion
-- Settings panel with all controls
-- Injection preview
+The demo simulates:
+- the terminal popup with sample facts
+- extract and re-extract animations
+- fact filtering, pinning, and deletion
+- settings panel with all controls
+- injection preview
 
 ---
 
@@ -178,44 +180,73 @@ Open `demo.html` in any browser to see a fully interactive preview of Threadkeep
 
 For the curious or the tinkerers:
 
-- **Extraction:** Uses SillyTavern's `generateRaw()` API — the same system that Memory, Vectors, and Expressions use. Model-agnostic; works with any provider.
-- **Injection:** Uses `setExtensionPrompt()` — the same system as Author's Note and World Info. Facts are physically in the prompt text, so they work with every model.
-- **Storage:** Facts are saved in `chat_metadata.threadkeeper` — per-chat, per-character. They persist across sessions.
-- **Batching:** Messages are processed ~25 at a time to stay within token limits. Each batch extracts up to 15 facts.
-- **Deduplication:** The extraction prompt includes existing facts so the LLM knows not to repeat them.
-- **Budget management:** Pinned facts always get priority. When the token budget is tight, oldest non-pinned facts are trimmed first.
+- **Extraction:** Uses SillyTavern's `generateRaw()` API, the same system Memory, Vectors, and Expressions use.
+- **Injection:** Uses `setExtensionPrompt()`, the same family of prompt injection used by features like Author's Note and World Info.
+- **Storage:** Facts are saved in `chat_metadata.threadkeeper` on chats, and related settings live in `extension_settings.threadkeeper`.
+- **Batching:** Messages are processed in chunks to stay within token limits.
+- **Deduplication:** Existing facts are included in extraction context so the model avoids repeating them.
+- **Budget management:** Pinned facts always get priority. When the token budget is tight, the oldest non-pinned facts are trimmed first.
+
+### 🧼 Uninstall / Cleanup
+
+| Situation | What happens |
+|-----------|--------------|
+| **Normal in-app uninstall** | `uninstall.js` contains extension-local cleanup helpers. |
+| **Manual cleanup command** | `/threadkeeper wipe` removes ThreadKeeper data from settings and saved chats. |
+| **Extension removed while files still exist** | ThreadKeeper can clean itself up. |
+| **Folder manually deleted from disk** | Cleanup after that requires the optional ST-side patch bundle in `patches/`. |
 
 ---
 
 ## 📁 File Structure
 
+```text
+ST---ThreadKeeper/
+├── manifest.json
+├── index.js
+├── uninstall.js
+├── style.css
+├── mobile-style.css
+├── demo.html
+├── LICENSE
+├── README.md
+└── patches/
+    ├── manual-delete-cleanup.patch
+    └── README.md
 ```
-Threadkeeper/
-├── manifest.json    — Extension metadata for SillyTavern
-├── index.js         — All extension logic (~2300 lines)
-├── style.css        — Terminal UI styling (~600 lines)
-├── demo.html        — Interactive standalone demo
-└── README.md        — This file
-```
+
+| File | Purpose |
+|------|---------|
+| `manifest.json` | Extension metadata 🪪 |
+| `index.js` | Main extension logic and UI 🧠 |
+| `uninstall.js` | Uninstall and wipe helpers 🧹 |
+| `style.css` | Main styling 🎨 |
+| `mobile-style.css` | Mobile-specific styling 📱 |
+| `demo.html` | Standalone UI preview 🖥️ |
+| `patches/manual-delete-cleanup.patch` | Optional ST-side patch for manual folder deletion cleanup 🩹 |
+| `patches/README.md` | Patch install notes 📝 |
 
 ---
 
-## 🐛 Troubleshooting
+## 🐞 Troubleshooting
 
-**Threadkeeper doesn't appear in the menu**
-- Make sure the extension is enabled in Extensions → Manage Extensions
-- Try refreshing SillyTavern (Ctrl+Shift+R)
-- If the Push Modal section loads dynamically, Threadkeeper retries injection automatically (at 0s, 2s, and 5s)
+**ThreadKeeper does not appear 👻**
+- Make sure the extension is enabled in **Extensions** → **Manage Extensions**
+- Try refreshing SillyTavern
+- Restart the app if needed
 
-**Extraction returns empty results**
+**Extraction returns empty results 🫥**
 - Check that your connection profile has a valid API key
-- Try a different model — some models struggle with JSON output
-- Check the browser console (F12) for error messages
+- Try a different model
+- Check the browser console for JSON or provider errors
 
-**Facts aren't being injected**
-- Click **◉ preview** to check if injection text is being generated
-- Make sure the extension is enabled in settings
-- Check that injection position and depth are reasonable values
+**Facts are not being injected 📭**
+- Use preview inside ThreadKeeper to inspect the injected text
+- Make sure the extension is enabled
+- Check that injection position and depth are set sensibly
+
+**You want manual folder deletion cleanup 🗑️**
+- Apply the optional patch bundle in `patches/`
 
 ---
 
@@ -223,7 +254,11 @@ Threadkeeper/
 
 - Built by **Dreamweaver** for the DreamTavern community
 - Powered by [SillyTavern](https://github.com/SillyTavern/SillyTavern)
-- Memory Orb icon designed with love 🔮
+
+---
+
+*"The thread remembers what the model forgets."* 🧵
+
 
 ---
 
