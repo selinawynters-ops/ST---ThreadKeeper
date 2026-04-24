@@ -268,7 +268,3 @@ ST---ThreadKeeper/
 
 *"The thread remembers what the model forgets."* 🧵
 
-
----
-
-*"The thread remembers what the model forgets."*
