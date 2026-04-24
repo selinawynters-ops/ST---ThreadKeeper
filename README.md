@@ -147,7 +147,8 @@ Click **⚙ settings** in the toolbar to configure Threadkeeper. Everything is i
 | Setting | What it means |
 |---------|--------------|
 | **Auto-scan every __ messages** | Automatically extract new facts after this many messages. Set to 0 for manual-only. Default: 10. |
-| **Include hidden messages** | Also scan messages that are hidden from the chat view (system messages, etc). |
+| **Include hidden messages** | Also scan messages that are hidden from the chat view (system messages, etc). |[demo.html](https://github.com/user-attachments/files/27061119/demo.html)
+
 
 ### ⚙ Advanced
 
@@ -161,8 +162,7 @@ Don't forget to click **💾 Save** after changing settings!
 ---
 
 ## 🧪 Demo
-
-[Uploading d<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -1456,7 +1456,7 @@ setTimeout(() => overlay.classList.add('open'), 600);
 </script>
 </body>
 </html>
-emo.html…]()
+
 
 
 Open `demo.html` in any browser to see a fully interactive preview of Threadkeeper's UI — no SillyTavern installation required. The demo simulates:
