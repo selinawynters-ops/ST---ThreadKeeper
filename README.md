@@ -1,5 +1,8 @@
 # ⌬ Threadkeeper
 
+<img width="1062" height="804" alt="brave_gNB9NbtpTU" src="https://github.com/user-attachments/assets/e76bdb2b-8d31-412a-89e8-a48ee9f813d3" />
+
+
 **LLM-powered memory for long roleplays.**
 
 Threadkeeper extracts key facts from your chat messages using an LLM and quietly injects them into every prompt — so your model never forgets what matters, no matter how long the conversation gets.
@@ -7,6 +10,12 @@ Threadkeeper extracts key facts from your chat messages using an LLM and quietly
 Built for [DreamTavern](https://github.com/selinawynters-ops/ST---ThreadKeeper) · SillyTavern Extension · v1.0.0
 
 ---
+
+
+<img width="1181" height="1080" alt="brave_b6WmIKtBg9" src="https://github.com/user-attachments/assets/56d6e2cd-8a39-4411-9c39-e82fdc4dc7fd" />
+<img width="313" height="392" alt="brave_kQYwqu52il" src="https://github.com/user-attachments/assets/d86c7ae0-8d43-4ec2-8697-817b23a532c9" />
+<img width="1118" height="1080" alt="brave_Vj5CSoqSfa" src="https://github.com/user-attachments/assets/4747073f-b6fe-4058-a1e6-4d245e8da968" />
+
 
 ## ✨ What It Does
 
