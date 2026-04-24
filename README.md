@@ -78,6 +78,15 @@ ThreadKeeper opens as a terminal-style popup with a familiar feel:
 └─────────────────────────────────────────┘
 ```
 
+
+
+
+https://github.com/user-attachments/assets/76c77bd5-4716-4f71-ac44-d65eb712ff52
+
+
+
+
+
 ### Toolbar Commands
 
 | Button | What it does |
