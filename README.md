@@ -1,4 +1,4 @@
-[demo.html](https://github.com/user-attachments/files/27061027/demo.html)# ⌬ Threadkeeper
+# ⌬ Threadkeeper
 
 **LLM-powered memory for long roleplays.**
 
@@ -147,8 +147,7 @@ Click **⚙ settings** in the toolbar to configure Threadkeeper. Everything is i
 | Setting | What it means |
 |---------|--------------|
 | **Auto-scan every __ messages** | Automatically extract new facts after this many messages. Set to 0 for manual-only. Default: 10. |
-| **Include hidden messages** | Also scan messages that are hidden from the chat view (system messages, etc). |[demo.html](https://github.com/user-attachments/files/27061119/demo.html)
-
+| **Include hidden messages** | Also scan messages that are hidden from the chat view (system messages, etc). |
 
 ### ⚙ Advanced
 

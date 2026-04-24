@@ -1,0 +1,219 @@
+diff --git a/public/scripts/extensions.js b/public/scripts/extensions.js
+index c3cdc1bda..99db98134 100644
+--- a/public/scripts/extensions.js
++++ b/public/scripts/extensions.js
+@@ -50,6 +50,8 @@ const getApiUrl = () => extension_settings.apiUrl;
+ const sortManifestsByOrder = (a, b) => parseInt(a.loading_order) - parseInt(b.loading_order) || String(a.display_name).localeCompare(String(b.display_name));
+ const sortManifestsByName = (a, b) => String(a.display_name).localeCompare(String(b.display_name)) || parseInt(a.loading_order) - parseInt(b.loading_order);
+ let connectedToApi = false;
++const THREADKEEPER_EXTENSION_NAME = 'third-party/ST---ThreadKeeper';
++const THREADKEEPER_SETTINGS_KEY = 'threadkeeper';
+ 
+ /**
+  * Holds manifest data for each extension.
+@@ -289,6 +291,36 @@ async function discoverExtensions() {
+     }
+ }
+ 
++async function maybeCleanupOrphanedThreadKeeperData() {
++    if (!extension_settings[THREADKEEPER_SETTINGS_KEY]) {
++        return;
++    }
++
++    if (extensionNames.includes(THREADKEEPER_EXTENSION_NAME)) {
++        return;
++    }
++
++    try {
++        const response = await fetch('/api/extensions/cleanup-data', {
++            method: 'POST',
++            headers: getRequestHeaders(),
++            body: JSON.stringify({
++                extensionName: 'ST---ThreadKeeper',
++            }),
++        });
++
++        if (!response.ok) {
++            console.warn('ThreadKeeper orphan cleanup was skipped.', response.status, await response.text());
++            return;
++        }
++
++        delete extension_settings[THREADKEEPER_SETTINGS_KEY];
++        console.info('Removed orphaned ThreadKeeper data after uninstall.');
++    } catch (error) {
++        console.error('Failed to clean orphaned ThreadKeeper data.', error);
++    }
++}
++
+ function onDisableExtensionClick() {
+     const name = $(this).data('name');
+     disableExtension(name, false);
+@@ -1305,6 +1337,7 @@ export async function loadExtensionSettings(settings, versionChanged, enableAuto
+     const extensions = await discoverExtensions();
+     extensionNames = extensions.map(x => x.name);
+     extensionTypes = Object.fromEntries(extensions.map(x => [x.name, x.type]));
++    await maybeCleanupOrphanedThreadKeeperData();
+     manifests = await getManifests(extensionNames);
+ 
+     if (versionChanged && enableAutoUpdate) {
+diff --git a/src/endpoints/extensions.js b/src/endpoints/extensions.js
+index 5925b9750..a40045c95 100644
+--- a/src/endpoints/extensions.js
++++ b/src/endpoints/extensions.js
+@@ -6,11 +6,13 @@ import sanitize from 'sanitize-filename';
+ import { CheckRepoActions, default as simpleGit } from 'simple-git';
+ 
+ import { PUBLIC_DIRECTORIES } from '../constants.js';
++import { removeThreadKeeperPersistedData } from '../util/threadkeeper-cleanup.js';
+ 
+ /**
+  * @type {Partial<import('simple-git').SimpleGitOptions>}
+  */
+ const OPTIONS = Object.freeze({ timeout: { block: 5 * 60 * 1000 } });
++const THREADKEEPER_EXTENSION_NAME = 'ST---ThreadKeeper';
+ 
+ /**
+  * This function extracts the extension information from the manifest file.
+@@ -405,6 +407,11 @@ router.post('/delete', async (request, response) => {
+         await fs.promises.rm(extensionPath, { recursive: true });
+         console.info(`Extension has been deleted at ${extensionPath}`);
+ 
++        if (sanitize(extensionName) === THREADKEEPER_EXTENSION_NAME) {
++            const cleanupResult = removeThreadKeeperPersistedData(request.user.directories);
++            console.info(`ThreadKeeper uninstall cleanup complete. Settings cleared: ${cleanupResult.cleanedSettings}. Chats cleaned: ${cleanupResult.cleanedChats}.`);
++        }
++
+         return response.send(`Extension has been deleted at ${extensionPath}`);
+ 
+     } catch (error) {
+@@ -413,6 +420,27 @@ router.post('/delete', async (request, response) => {
+     }
+ });
+ 
++router.post('/cleanup-data', async (request, response) => {
++    try {
++        if (sanitize(request.body.extensionName) !== THREADKEEPER_EXTENSION_NAME) {
++            return response.status(400).send('Unsupported extension cleanup request.');
++        }
++
++        const extensionPath = path.join(request.user.directories.extensions, THREADKEEPER_EXTENSION_NAME);
++        const globalExtensionPath = path.join(PUBLIC_DIRECTORIES.globalExtensions, THREADKEEPER_EXTENSION_NAME);
++
++        if (fs.existsSync(extensionPath) || fs.existsSync(globalExtensionPath)) {
++            return response.status(409).send('ThreadKeeper is still installed.');
++        }
++
++        const cleanupResult = removeThreadKeeperPersistedData(request.user.directories);
++        return response.send(cleanupResult);
++    } catch (error) {
++        console.error('Cleaning extension data failed', error);
++        return response.status(500).send(`Server Error: ${error.message}`);
++    }
++});
++
+ /**
+  * Discover the extension folders
+  * If the folder is called third-party, search for subfolders instead
+diff --git a/src/util/threadkeeper-cleanup.js b/src/util/threadkeeper-cleanup.js
+new file mode 100644
+--- /dev/null
++++ b/src/util/threadkeeper-cleanup.js
+@@ -0,0 +1,88 @@
++import fs from 'node:fs';
++import path from 'node:path';
++
++import { SETTINGS_FILE } from '../constants.js';
++
++const MODULE_NAME = 'threadkeeper';
++const CHAT_FILE_EXTENSION = '.jsonl';
++
++function walkFiles(rootDirectory, predicate, results = []) {
++    if (!fs.existsSync(rootDirectory)) {
++        return results;
++    }
++
++    for (const entry of fs.readdirSync(rootDirectory, { withFileTypes: true })) {
++        const fullPath = path.join(rootDirectory, entry.name);
++        if (entry.isDirectory()) {
++            walkFiles(fullPath, predicate, results);
++            continue;
++        }
++
++        if (predicate(fullPath, entry)) {
++            results.push(fullPath);
++        }
++    }
++
++    return results;
++}
++
++function rewriteChatHeaderWithoutThreadKeeper(filePath) {
++    const content = fs.readFileSync(filePath, 'utf8');
++    const newlineMatch = content.match(/\r?\n/);
++    const newline = newlineMatch?.[0] ?? '';
++    const splitIndex = newline ? content.indexOf(newline) : -1;
++    const firstLine = splitIndex === -1 ? content : content.slice(0, splitIndex);
++
++    if (!firstLine.trim()) {
++        return false;
++    }
++
++    let header;
++    try {
++        header = JSON.parse(firstLine);
++    } catch {
++        return false;
++    }
++
++    if (!header?.chat_metadata || !Object.hasOwn(header.chat_metadata, MODULE_NAME)) {
++        return false;
++    }
++
++    delete header.chat_metadata[MODULE_NAME];
++    const remainder = splitIndex === -1 ? '' : content.slice(splitIndex + newline.length);
++    const nextContent = remainder ? `${JSON.stringify(header)}${newline}${remainder}` : JSON.stringify(header);
++    fs.writeFileSync(filePath, nextContent, 'utf8');
++    return true;
++}
++
++function cleanupSettings(userDirectories) {
++    const settingsPath = path.join(userDirectories.root, SETTINGS_FILE);
++
++    if (!fs.existsSync(settingsPath)) {
++        return false;
++    }
++
++    let settings;
++    try {
++        settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
++    } catch {
++        return false;
++    }
++
++    if (!settings?.extension_settings || !Object.hasOwn(settings.extension_settings, MODULE_NAME)) {
++        return false;
++    }
++
++    delete settings.extension_settings[MODULE_NAME];
++    fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 4), 'utf8');
++    return true;
++}
++
++export function removeThreadKeeperPersistedData(userDirectories) {
++    const chatFiles = [
++        ...walkFiles(userDirectories.chats, filePath => path.extname(filePath).toLowerCase() === CHAT_FILE_EXTENSION),
++        ...walkFiles(userDirectories.groupChats, filePath => path.extname(filePath).toLowerCase() === CHAT_FILE_EXTENSION),
++    ];
++
++    let cleanedChats = 0;
++    for (const filePath of chatFiles) {
++        if (rewriteChatHeaderWithoutThreadKeeper(filePath)) {
++            cleanedChats++;
++        }
++    }
++
++    return {
++        cleanedSettings: cleanupSettings(userDirectories),
++        cleanedChats,
++    };
++}

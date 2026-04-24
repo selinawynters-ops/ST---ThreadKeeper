@@ -1,0 +1,293 @@
+/* ═══════════════════════════════════════════════════════════════════
+   THREADKEEPER — Mobile Styles
+   Follows DreamTavern mobile-styles.css patterns
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* Tablets, horizontal phones, and vertical phones (≤1000px) —
+   matches DreamTavern's primary mobile breakpoint */
+@media screen and (max-width: 1000px) {
+
+    /* ── Overlay: becomes the single scroll container ── */
+    #threadkeeper-overlay {
+        width: 100dvw !important;
+        height: 100dvh !important;
+        top: 0 !important;
+        left: 0 !important;
+        align-items: flex-start !important;
+        justify-content: center !important;
+        overflow-y: auto !important;
+        overflow-x: hidden !important;
+        padding: 96px 18px 96px !important;
+        box-sizing: border-box !important;
+        -webkit-overflow-scrolling: touch !important;
+    }
+
+    /* ── Terminal: grows with content, no height cap ── */
+    #threadkeeper-terminal {
+        width: calc(100dvw - 36px) !important;
+        max-width: calc(100dvw - 36px) !important;
+        height: auto !important;
+        max-height: none !important;
+        overflow: visible !important;
+        flex-shrink: 0 !important;
+        box-sizing: border-box !important;
+    }
+
+    #threadkeeper-overlay.open #threadkeeper-terminal {
+        transform: scale(1) !important;
+    }
+
+    /* ── Close hint: sits in the bottom padding, tappable backdrop area ── */
+    .tk-close-hint {
+        display: block !important;
+        text-align: center !important;
+        font-size: 0.6rem !important;
+        color: rgba(75, 94, 111, 0.5) !important;
+        letter-spacing: 0.08em !important;
+        padding: 18px 0 8px !important;
+        user-select: none !important;
+        pointer-events: none !important;
+    }
+
+    /* ── Config panel: full natural height, no internal scroll ── */
+    .tk-config-panel {
+        height: auto !important;
+        max-height: none !important;
+        overflow: visible !important;
+    }
+
+    /* ── Facts body: full natural height, no internal scroll ── */
+    .tk-body {
+        height: auto !important;
+        max-height: none !important;
+        overflow: visible !important;
+    }
+
+    /* ── Header: compact ── */
+    .tk-header {
+        padding: 8px 10px !important;
+        gap: 6px !important;
+    }
+
+    .tk-title {
+        font-size: 0.72rem !important;
+    }
+
+    .tk-stats {
+        display: none !important;
+    }
+
+    /* ── Toolbar: wrap buttons ── */
+    .tk-toolbar {
+        flex-wrap: wrap !important;
+        gap: 4px !important;
+        padding: 6px 8px !important;
+    }
+
+    .tk-filter-group {
+        display: none !important;
+    }
+
+    .tk-btn {
+        font-size: 0.62rem !important;
+        padding: 4px 8px !important;
+    }
+
+
+    .tk-cfg-content {
+        padding: 10px !important;
+    }
+
+    .tk-cfg-row {
+        flex-direction: column !important;
+        align-items: flex-start !important;
+        gap: 6px !important;
+    }
+
+    .tk-cfg-row-model {
+        gap: 4px !important;
+        padding-bottom: 2px !important;
+    }
+
+    .tk-cfg-row-accuracy {
+        gap: 4px !important;
+        padding-top: 2px !important;
+    }
+
+    .tk-cfg-label {
+        min-width: unset !important;
+        max-width: 100% !important;
+    }
+
+    .tk-cfg-hint {
+        font-size: 0.6rem !important;
+    }
+
+    .tk-cfg-select,
+    .tk-number {
+        max-width: 100% !important;
+        box-sizing: border-box !important;
+    }
+
+    /* ── Model Picker: full-width so dropdown has a centered anchor ── */
+    .tk-model-picker {
+        width: 100% !important;
+        min-width: 0 !important;
+        max-width: 100% !important;
+    }
+
+    .tk-mp-trigger {
+        width: 100% !important;
+        min-width: 0 !important;
+        max-width: 100% !important;
+        box-sizing: border-box !important;
+    }
+
+    /* Center the dropdown on the trigger using transform instead of right-align */
+    .tk-mp-dropdown {
+        left: 50% !important;
+        right: auto !important;
+        transform: translateX(-50%) !important;
+        width: calc(100dvw - 48px) !important;
+        max-width: calc(100dvw - 48px) !important;
+        min-width: 0 !important;
+        max-height: 220px !important;
+        border-radius: 12px !important;
+    }
+
+    .tk-mp-dropdown.open {
+        display: flex !important;
+    }
+
+    .tk-mp-list {
+        max-height: 220px !important;
+        -webkit-overflow-scrolling: touch;
+    }
+
+    .tk-mp-item {
+        padding: 10px 12px !important;
+        font-size: 0.68rem !important;
+    }
+
+    /* ── Placement picker: same full-width + centered approach ── */
+    .tk-placement-picker {
+        width: 100% !important;
+        min-width: 0 !important;
+        max-width: 100% !important;
+    }
+
+    .tk-placement-trigger {
+        width: 100% !important;
+        font-size: 0.7rem !important;
+        padding: 6px 10px !important;
+        box-sizing: border-box !important;
+    }
+
+    .tk-placement-dropdown {
+        left: 50% !important;
+        right: auto !important;
+        transform: translateX(-50%) !important;
+        width: calc(100dvw - 48px) !important;
+        min-width: 0 !important;
+        max-width: calc(100dvw - 48px) !important;
+    }
+
+    .tk-placement-item {
+        padding: 10px 12px !important;
+        font-size: 0.72rem !important;
+    }
+
+    /* ── Connection select ── */
+    .tk-cfg-select {
+        width: 100% !important;
+        font-size: 0.68rem !important;
+    }
+
+    /* ── Facts: touch-friendly ── */
+    .tk-fact {
+        padding: 8px !important;
+    }
+
+    .tk-fact-text {
+        font-size: 0.68rem !important;
+    }
+
+    /* Always show fact action buttons on mobile (no hover) */
+    .tk-fact .fact-actions-row {
+        opacity: 1 !important;
+    }
+
+    .tk-fact-actions .tk-fact-btn {
+        padding: 6px !important;
+        min-width: 28px !important;
+        min-height: 28px !important;
+    }
+
+    /* ── Terminal input ── */
+    .tk-input-line {
+        padding: 8px 10px !important;
+    }
+
+    .tk-input {
+        font-size: 0.7rem !important;
+    }
+
+    /* ── Footer (injection preview): natural height, no internal scroll ──
+       overflow-y: auto on the footer causes mobile browsers to capture touch
+       events and swallow them, preventing the overlay from scrolling. */
+    .tk-footer {
+        max-height: none !important;
+        overflow-y: visible !important;
+        overflow-x: visible !important;
+        overscroll-behavior: auto !important;
+    }
+}
+
+/* ── Small phones (≤480px) ── */
+@media screen and (max-width: 480px) {
+
+    #threadkeeper-terminal {
+        border-radius: 8px !important;
+    }
+
+    #threadkeeper-overlay {
+        padding-left: 16px !important;
+        padding-right: 16px !important;
+    }
+
+    #threadkeeper-terminal {
+        width: calc(100dvw - 32px) !important;
+        max-width: calc(100dvw - 32px) !important;
+    }
+
+    .tk-header {
+        padding: 6px 8px !important;
+    }
+
+    .tk-dots .tk-dot {
+        width: 10px !important;
+        height: 10px !important;
+    }
+
+    .tk-title {
+        font-size: 0.65rem !important;
+    }
+
+    .tk-toolbar {
+        padding: 4px 6px !important;
+    }
+
+    .tk-btn {
+        font-size: 0.58rem !important;
+        padding: 3px 6px !important;
+    }
+
+    .tk-cfg-title {
+        font-size: 0.7rem !important;
+    }
+
+    .tk-placement-item {
+        padding: 8px 10px !important;
+        font-size: 0.68rem !important;
+    }
+}

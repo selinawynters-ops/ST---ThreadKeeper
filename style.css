@@ -1,0 +1,1293 @@
+/* ═══════════════════════════════════════════════════════
+   THREADKEEPER — Terminal-style Key Facts UI
+   DreamTavern Extension · v1.0.0
+   ═══════════════════════════════════════════════════════ */
+
+:root {
+    --tk-bg: #0a0e17;
+    --tk-header: #111827;
+    --tk-green: #4ade80;
+    --tk-cyan: #22d3ee;
+    --tk-amber: #fbbf24;
+    --tk-red: #f87171;
+    --tk-purple: #a78bfa;
+    --tk-pink: #f0abfc;
+    --tk-text: #c9d6e3;
+    --tk-dim: #4b5e6f;
+    --tk-border: rgba(74, 222, 128, 0.15);
+    --tk-glow: rgba(74, 222, 128, 0.06);
+}
+
+#threadkeeper-menu-item,
+#threadkeeper-menu-item:hover,
+#threadkeeper-menu-item:focus,
+#threadkeeper-menu-item:active {
+    background: transparent !important;
+    border: 0 !important;
+    box-shadow: none !important;
+    outline: none !important;
+}
+
+#threadkeeper-menu-item {
+    gap: 12px !important;
+}
+
+#threadkeeper-menu-item .tk-menu-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 24px;
+    width: 24px;
+    height: 24px;
+    line-height: 0;
+    overflow: visible;
+    background: transparent;
+    border: 0;
+    box-shadow: none;
+}
+
+#threadkeeper-menu-item .tk-menu-icon svg {
+    display: block;
+    width: 30px !important;
+    height: 30px !important;
+    transform: translateY(-1px);
+    overflow: visible;
+}
+
+#threadkeeper-menu-item .tk-menu-label {
+    display: inline-flex;
+    align-items: center;
+    line-height: 1;
+    font-size: 1.18rem !important;
+    align-self: center;
+}
+
+/* ── Overlay ── */
+#threadkeeper-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 10000;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.25s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(3px);
+}
+
+#threadkeeper-overlay.open {
+    opacity: 1;
+    pointer-events: all;
+}
+
+/* ── Mobile close hint (hidden on desktop) ── */
+.tk-close-hint {
+    display: none;
+}
+
+/* ── Terminal Window ── */
+#threadkeeper-terminal {
+    position: relative;
+    z-index: 1;
+    width: 580px;
+    max-width: 94vw;
+    max-height: 84vh;
+    display: flex;
+    flex-direction: column;
+    background: var(--tk-bg);
+    border: 1px solid rgba(74, 222, 128, 0.2);
+    border-radius: 10px;
+    box-shadow: 0 8px 48px rgba(0, 0, 0, 0.6), 0 0 30px var(--tk-glow);
+    transition: transform 0.25s ease;
+    overflow-y: auto;
+    overflow-x: hidden;
+    font-family: 'JetBrains Mono', 'Cascadia Code', 'Fira Code', monospace;
+    transform: scale(0.95);
+    scrollbar-width: thin;
+    scrollbar-color: #1a2332 transparent;
+    scroll-behavior: smooth;
+}
+
+#threadkeeper-terminal::-webkit-scrollbar {
+    width: 6px;
+}
+
+#threadkeeper-terminal::-webkit-scrollbar-thumb {
+    background: #1a2332;
+    border-radius: 3px;
+}
+
+#threadkeeper-overlay.open #threadkeeper-terminal {
+    transform: scale(1);
+}
+
+/* ── Header ── */
+.tk-header {
+    display: flex;
+    align-items: center;
+    padding: 10px 14px;
+    background: var(--tk-header);
+    border-bottom: 1px solid var(--tk-border);
+    gap: 10px;
+    cursor: default;
+    user-select: none;
+}
+
+.tk-dots {
+    display: flex;
+    gap: 6px;
+}
+
+.tk-dot {
+    width: 11px;
+    height: 11px;
+    border-radius: 50%;
+    cursor: pointer;
+    transition: opacity 0.15s;
+}
+
+.tk-dot:hover {
+    opacity: 0.7;
+}
+
+.tk-dot.red {
+    background: #ff5f57;
+}
+
+.tk-dot.yellow {
+    background: #febc2e;
+}
+
+.tk-dot.green {
+    background: #28c840;
+}
+
+.tk-header-icon {
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
+}
+
+.tk-title {
+    flex: 1;
+    text-align: center;
+    font-size: 0.72rem;
+    color: var(--tk-dim);
+    letter-spacing: 0.5px;
+}
+
+.tk-stats {
+    font-size: 0.62rem;
+    color: var(--tk-dim);
+    display: flex;
+    gap: 12px;
+}
+
+.tk-stats .stat-val {
+    color: var(--tk-cyan);
+}
+
+/* ── Scan Progress ── */
+.tk-progress {
+    height: 2px;
+    background: rgba(74, 222, 128, 0.1);
+    overflow: hidden;
+    display: none;
+}
+
+.tk-progress.active {
+    display: block;
+}
+
+.tk-progress-bar {
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, var(--tk-green), var(--tk-cyan));
+    transition: width 0.3s ease;
+    box-shadow: 0 0 8px rgba(74, 222, 128, 0.3);
+}
+
+/* ── Toolbar ── */
+.tk-toolbar {
+    display: flex;
+    align-items: center;
+    padding: 8px 14px;
+    gap: 6px;
+    border-bottom: 1px solid rgba(74, 222, 128, 0.08);
+    background: rgba(17, 24, 39, 0.6);
+    flex-wrap: wrap;
+}
+
+.tk-cmd-btn {
+    font-family: inherit;
+    font-size: 0.68rem;
+    padding: 4px 10px;
+    border-radius: 4px;
+    border: 1px solid rgba(74, 222, 128, 0.2);
+    background: rgba(74, 222, 128, 0.06);
+    color: var(--tk-green);
+    cursor: pointer;
+    transition: all 0.15s;
+    white-space: nowrap;
+}
+
+.tk-cmd-btn:hover {
+    background: rgba(74, 222, 128, 0.14);
+    border-color: rgba(74, 222, 128, 0.4);
+}
+
+.tk-cmd-btn.running {
+    pointer-events: none;
+    opacity: 0.5;
+}
+
+.tk-cmd-btn.reextract {
+    border-color: rgba(251, 191, 36, 0.2);
+    background: rgba(251, 191, 36, 0.06);
+    color: var(--tk-amber);
+}
+
+.tk-cmd-btn.reextract:hover {
+    background: rgba(251, 191, 36, 0.14);
+    border-color: rgba(251, 191, 36, 0.4);
+}
+
+.tk-cmd-btn.danger {
+    border-color: rgba(248, 113, 113, 0.2);
+    background: rgba(248, 113, 113, 0.06);
+    color: var(--tk-red);
+}
+
+.tk-cmd-btn.danger:hover {
+    background: rgba(248, 113, 113, 0.14);
+    border-color: rgba(248, 113, 113, 0.4);
+}
+
+.tk-cmd-btn.secondary {
+    border-color: rgba(34, 211, 238, 0.2);
+    background: rgba(34, 211, 238, 0.06);
+    color: var(--tk-cyan);
+}
+
+.tk-cmd-btn.secondary:hover {
+    background: rgba(34, 211, 238, 0.14);
+    border-color: rgba(34, 211, 238, 0.4);
+}
+
+.tk-toolbar-sep {
+    width: 1px;
+    height: 20px;
+    background: rgba(74, 222, 128, 0.1);
+    margin: 0 2px;
+}
+
+.tk-filter-group {
+    margin-left: auto;
+    display: flex;
+    gap: 4px;
+}
+
+.tk-filter {
+    font-family: inherit;
+    font-size: 0.6rem;
+    padding: 3px 7px;
+    border-radius: 3px;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--tk-dim);
+    cursor: pointer;
+    transition: all 0.15s;
+    text-transform: uppercase;
+}
+
+.tk-filter:hover {
+    color: var(--tk-text);
+}
+
+.tk-filter.active {
+    border-color: rgba(167, 139, 250, 0.3);
+    background: rgba(167, 139, 250, 0.1);
+    color: var(--tk-purple);
+}
+
+/* ── Terminal Body ── */
+.tk-body {
+    flex: 1 1 auto;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 12px 14px;
+    font-size: 0.75rem;
+    line-height: 1.7;
+    min-height: 0;
+    scrollbar-width: thin;
+    scrollbar-color: #1a2332 transparent;
+    scroll-behavior: smooth;
+    overscroll-behavior: contain;
+}
+
+.tk-body::-webkit-scrollbar {
+    width: 5px;
+}
+
+.tk-body::-webkit-scrollbar-thumb {
+    background: #1a2332;
+    border-radius: 3px;
+}
+
+.tk-line {
+    animation: tkFade 0.3s ease;
+    padding: 2px 0;
+}
+
+@keyframes tkFade {
+    from {
+        opacity: 0;
+        transform: translateX(-4px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+.tk-prompt {
+    color: var(--tk-green);
+}
+
+.tk-cmd {
+    color: var(--tk-text);
+}
+
+.tk-info {
+    color: var(--tk-cyan);
+}
+
+.tk-warn {
+    color: var(--tk-amber);
+}
+
+.tk-error {
+    color: var(--tk-red);
+}
+
+.tk-dim {
+    color: var(--tk-dim);
+}
+
+.tk-highlight {
+    color: var(--tk-purple);
+}
+
+.tk-success {
+    color: var(--tk-green);
+}
+
+/* ── Fact Entries ── */
+.tk-fact {
+    padding: 6px 10px;
+    margin: 4px 0;
+    border-left: 2px solid var(--tk-dim);
+    background: rgba(255, 255, 255, 0.02);
+    border-radius: 0 4px 4px 0;
+    cursor: default;
+    transition: all 0.15s;
+    position: relative;
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
+}
+
+.tk-fact:hover {
+    background: rgba(255, 255, 255, 0.04);
+}
+
+.tk-fact.cat-character {
+    border-left-color: var(--tk-purple);
+}
+
+.tk-fact.cat-relationship {
+    border-left-color: var(--tk-pink);
+}
+
+.tk-fact.cat-event {
+    border-left-color: var(--tk-cyan);
+}
+
+.tk-fact.cat-item {
+    border-left-color: var(--tk-amber);
+}
+
+.tk-fact.cat-location {
+    border-left-color: var(--tk-green);
+}
+
+.tk-fact.cat-plot {
+    border-left-color: #fb923c;
+}
+
+.tk-fact .fact-tag {
+    font-size: 0.58rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    flex-shrink: 0;
+    min-width: 55px;
+}
+
+.tk-fact.cat-character .fact-tag {
+    color: var(--tk-purple);
+}
+
+.tk-fact.cat-relationship .fact-tag {
+    color: var(--tk-pink);
+}
+
+.tk-fact.cat-event .fact-tag {
+    color: var(--tk-cyan);
+}
+
+.tk-fact.cat-item .fact-tag {
+    color: var(--tk-amber);
+}
+
+.tk-fact.cat-location .fact-tag {
+    color: var(--tk-green);
+}
+
+.tk-fact.cat-plot .fact-tag {
+    color: #fb923c;
+}
+
+.tk-fact .fact-body {
+    flex: 1;
+    color: var(--tk-text);
+    font-size: 0.72rem;
+}
+
+.tk-fact .fact-actions-row {
+    display: flex;
+    gap: 6px;
+    flex-shrink: 0;
+    opacity: 0;
+    transition: opacity 0.15s;
+}
+
+.tk-fact:hover .fact-actions-row {
+    opacity: 1;
+}
+
+.tk-micro-btn {
+    font-family: inherit;
+    font-size: 0.58rem;
+    padding: 2px 5px;
+    border-radius: 3px;
+    border: 1px solid var(--tk-dim);
+    background: transparent;
+    color: var(--tk-dim);
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.tk-micro-btn:hover {
+    border-color: var(--tk-text);
+    color: var(--tk-text);
+}
+
+.tk-micro-btn.pinned {
+    border-color: var(--tk-amber);
+    color: var(--tk-amber);
+    background: rgba(251, 191, 36, 0.08);
+}
+
+.tk-micro-btn.del-btn:hover {
+    border-color: var(--tk-red);
+    color: var(--tk-red);
+}
+
+.tk-micro-btn.src-btn:hover {
+    border-color: var(--tk-cyan);
+    color: var(--tk-cyan);
+}
+
+.tk-cursor {
+    display: inline-block;
+    width: 7px;
+    height: 14px;
+    background: var(--tk-green);
+    animation: tkBlink 1s step-end infinite;
+    vertical-align: middle;
+    margin-left: 2px;
+}
+
+@keyframes tkBlink {
+    50% {
+        opacity: 0;
+    }
+}
+
+/* ── Injection Preview Footer ── */
+.tk-footer {
+    border-top: 1px solid var(--tk-border);
+    padding: 8px 14px;
+    background: rgba(17, 24, 39, 0.8);
+    font-size: 0.62rem;
+    color: var(--tk-dim);
+    display: none;
+    max-height: 110px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    scroll-behavior: smooth;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+    scrollbar-color: #1a2332 transparent;
+}
+
+.tk-footer::-webkit-scrollbar {
+    width: 5px;
+}
+
+.tk-footer::-webkit-scrollbar-thumb {
+    background: #1a2332;
+    border-radius: 3px;
+}
+
+.tk-footer.visible {
+    display: block;
+}
+
+.tk-footer .footer-label {
+    color: var(--tk-cyan);
+    margin-bottom: 4px;
+}
+
+.tk-footer pre {
+    font-size: 0.6rem;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    color: var(--tk-dim);
+    margin: 0;
+    font-family: inherit;
+}
+
+/* ═══════════════════════════════════════════════════════
+   CONFIG PANEL
+   ═══════════════════════════════════════════════════════ */
+.tk-config-panel {
+    display: none;
+    flex-direction: column;
+    gap: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    font-family: 'Raleway', -apple-system, BlinkMacSystemFont, sans-serif;
+    font-size: 0.82rem;
+    flex: 1 1 auto;
+    min-height: 0;
+    scrollbar-width: thin;
+    scrollbar-color: #1a2332 transparent;
+    scroll-behavior: smooth;
+    overscroll-behavior: contain;
+}
+
+.tk-config-panel::-webkit-scrollbar {
+    width: 5px;
+}
+
+.tk-config-panel::-webkit-scrollbar-thumb {
+    background: #1a2332;
+    border-radius: 3px;
+}
+
+.tk-config-panel.visible {
+    display: flex;
+}
+
+/* When a dropdown is open, disable scroll clipping so the absolute dropdown can overflow */
+.tk-config-panel.dropdown-open {
+    overflow: visible !important;
+}
+
+/* Also let the cfg-row and cfg-section overflow when dropdown is active */
+.tk-config-panel.dropdown-open .tk-cfg-row,
+.tk-config-panel.dropdown-open .tk-cfg-section {
+    overflow: visible !important;
+}
+
+
+.tk-cfg-section {
+    padding: 14px 18px;
+    border-bottom: 1px solid rgba(74, 222, 128, 0.08);
+    min-width: 0;
+    overflow: hidden;
+}
+
+.tk-cfg-title {
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.tk-cfg-title.connection {
+    color: var(--tk-cyan);
+}
+
+.tk-cfg-title.memory {
+    color: var(--tk-purple);
+}
+
+.tk-cfg-title.scanning {
+    color: var(--tk-green);
+}
+
+.tk-cfg-title.advanced {
+    color: var(--tk-dim);
+}
+
+.tk-cfg-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 0;
+    gap: 12px;
+    min-width: 0;
+    overflow: hidden;
+}
+
+.tk-cfg-row-model {
+    padding-bottom: 4px;
+}
+
+.tk-cfg-row-accuracy {
+    padding-top: 2px;
+}
+
+.tk-cfg-row-hidden {
+    display: none;
+}
+
+.tk-cfg-label {
+    font-size: 0.78rem;
+    color: var(--tk-text);
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.tk-cfg-hint {
+    font-size: 0.62rem;
+    color: var(--tk-dim);
+    font-style: italic;
+    max-width: 260px;
+}
+
+.tk-cfg-select {
+    padding: 5px 28px 5px 10px;
+    border-radius: 5px;
+    border: 1px solid rgba(74, 222, 128, 0.2);
+    background: rgba(74, 222, 128, 0.06);
+    color: var(--tk-green);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.7rem;
+    cursor: pointer;
+    appearance: none;
+    min-width: 170px;
+    max-width: 100%;
+    box-sizing: border-box;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%234ade80'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 10px center;
+}
+
+.tk-cfg-select:focus {
+    outline: none;
+    border-color: rgba(74, 222, 128, 0.5);
+}
+
+.tk-cfg-select option {
+    background: var(--tk-bg);
+    color: var(--tk-text);
+}
+
+/* Toggle */
+.tk-toggle {
+    position: relative;
+    width: 40px;
+    height: 22px;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+.tk-toggle input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.tk-toggle .slider {
+    position: absolute;
+    inset: 0;
+    border-radius: 11px;
+    background: rgba(75, 94, 111, 0.4);
+    transition: all 0.2s;
+}
+
+.tk-toggle .slider::after {
+    content: '';
+    position: absolute;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    left: 3px;
+    top: 3px;
+    background: var(--tk-dim);
+    transition: all 0.2s;
+}
+
+.tk-toggle input:checked+.slider {
+    background: rgba(74, 222, 128, 0.25);
+}
+
+.tk-toggle input:checked+.slider::after {
+    transform: translateX(18px);
+    background: var(--tk-green);
+}
+
+/* Slider */
+.tk-slider-wrap {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+}
+
+.tk-slider {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 120px;
+    height: 4px;
+    border-radius: 2px;
+    background: rgba(75, 94, 111, 0.4);
+    outline: none;
+}
+
+.tk-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--tk-green);
+    cursor: pointer;
+    border: 2px solid var(--tk-bg);
+}
+
+.tk-slider::-moz-range-thumb {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--tk-green);
+    cursor: pointer;
+    border: 2px solid var(--tk-bg);
+}
+
+.tk-slider-val {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.65rem;
+    color: var(--tk-cyan);
+    min-width: 55px;
+}
+
+.tk-number {
+    width: 60px;
+    padding: 4px 8px;
+    border-radius: 5px;
+    border: 1px solid rgba(74, 222, 128, 0.2);
+    background: rgba(74, 222, 128, 0.06);
+    color: var(--tk-green);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.72rem;
+    text-align: center;
+}
+
+.tk-number:focus {
+    outline: none;
+    border-color: rgba(74, 222, 128, 0.5);
+}
+
+/* Pills */
+.tk-pills {
+    display: flex;
+    gap: 4px;
+}
+
+.tk-pill {
+    padding: 4px 12px;
+    border-radius: 4px;
+    font-size: 0.66rem;
+    font-family: 'JetBrains Mono', monospace;
+    border: 1px solid rgba(167, 139, 250, 0.15);
+    background: transparent;
+    color: var(--tk-dim);
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.tk-pill:hover {
+    color: var(--tk-text);
+    border-color: rgba(167, 139, 250, 0.3);
+}
+
+.tk-pill.active {
+    background: rgba(167, 139, 250, 0.12);
+    border-color: rgba(167, 139, 250, 0.4);
+    color: var(--tk-purple);
+}
+
+/* Advanced toggle */
+.tk-advanced-toggle {
+    font-size: 0.65rem;
+    color: var(--tk-dim);
+    cursor: pointer;
+    padding: 8px 18px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    transition: color 0.15s;
+    user-select: none;
+}
+
+.tk-advanced-toggle:hover {
+    color: var(--tk-text);
+}
+
+.tk-advanced-toggle .arrow {
+    transition: transform 0.2s;
+    display: inline-block;
+}
+
+.tk-advanced-toggle.expanded .arrow {
+    transform: rotate(90deg);
+}
+
+.tk-advanced-body {
+    display: none;
+}
+
+.tk-advanced-body.visible {
+    display: block;
+}
+
+/* Debug panel */
+/* Config footer */
+.tk-cfg-footer {
+    padding: 12px 18px;
+    border-top: 1px solid rgba(74, 222, 128, 0.08);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.tk-back-btn {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.68rem;
+    padding: 4px 12px;
+    border-radius: 4px;
+    border: 1px solid rgba(74, 222, 128, 0.2);
+    background: rgba(74, 222, 128, 0.06);
+    color: var(--tk-green);
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.tk-back-btn:hover {
+    background: rgba(74, 222, 128, 0.14);
+}
+
+.tk-save-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.68rem;
+    padding: 5px 14px;
+    border-radius: 4px;
+    border: 1px solid rgba(74, 222, 128, 0.3);
+    background: rgba(74, 222, 128, 0.1);
+    color: var(--tk-green);
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.tk-save-btn:hover {
+    background: rgba(74, 222, 128, 0.2);
+    border-color: rgba(74, 222, 128, 0.5);
+}
+
+.tk-save-btn.saved {
+    border-color: rgba(74, 222, 128, 0.5);
+    background: rgba(74, 222, 128, 0.2);
+}
+
+/* ── Searchable Model Picker ── */
+.tk-model-picker {
+    position: relative;
+    min-width: 0;
+    max-width: 100%;
+}
+
+.tk-mp-trigger {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 10px;
+    border-radius: 5px;
+    border: 1px solid rgba(74, 222, 128, 0.2);
+    background: rgba(74, 222, 128, 0.06);
+    color: var(--tk-green);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.7rem;
+    cursor: pointer;
+    transition: all 0.15s;
+    min-width: 170px;
+    max-width: 100%;
+    justify-content: space-between;
+    box-sizing: border-box;
+}
+
+.tk-mp-trigger:hover {
+    border-color: rgba(74, 222, 128, 0.4);
+}
+
+.tk-mp-trigger.open {
+    border-color: rgba(74, 222, 128, 0.5);
+    background: rgba(74, 222, 128, 0.1);
+}
+
+.tk-mp-trigger .mp-arrow {
+    font-size: 0.55rem;
+    color: var(--tk-dim);
+    transition: transform 0.2s;
+}
+
+.tk-mp-trigger.open .mp-arrow {
+    transform: rotate(180deg);
+}
+
+.tk-mp-trigger .mp-selected-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tk-placement-picker {
+    position: relative;
+    min-width: 220px;
+}
+
+.tk-placement-trigger {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 7px 12px;
+    border-radius: 8px;
+    border: 1px solid rgba(74, 222, 128, 0.3);
+    background: rgba(74, 222, 128, 0.08);
+    color: var(--tk-green);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.78rem;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.tk-placement-trigger:hover,
+.tk-placement-trigger.open {
+    background: rgba(74, 222, 128, 0.12);
+    border-color: rgba(74, 222, 128, 0.45);
+}
+
+.tk-placement-trigger-label {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-align: left;
+}
+
+.tk-placement-arrow {
+    font-size: 0.58rem;
+    color: var(--tk-green);
+    transition: transform 0.2s ease;
+}
+
+.tk-placement-trigger.open .tk-placement-arrow {
+    transform: rotate(180deg);
+}
+
+.tk-placement-dropdown {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    right: 0;
+    z-index: 10052;
+    display: none;
+    flex-direction: column;
+    gap: 6px;
+    padding: 8px;
+    border-radius: 12px;
+    border: 1px solid rgba(74, 222, 128, 0.15);
+    background: #2e3036;
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
+    max-height: 300px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    scrollbar-width: thin;
+    scrollbar-color: #1a2332 transparent;
+}
+
+.tk-placement-dropdown::-webkit-scrollbar {
+    width: 4px;
+}
+
+.tk-placement-dropdown::-webkit-scrollbar-thumb {
+    background: #1a2332;
+    border-radius: 2px;
+}
+
+.tk-placement-dropdown.open {
+    display: flex;
+}
+
+.tk-placement-item {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 14px 16px;
+    border: 0;
+    border-radius: 18px;
+    background: transparent;
+    color: #f0f1f7;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.82rem;
+    text-align: left;
+    cursor: pointer;
+    transition: background 0.15s ease;
+}
+
+.tk-placement-item:hover,
+.tk-placement-item.selected {
+    background: rgba(255, 255, 255, 0.04);
+}
+
+.tk-placement-label {
+    flex: 1;
+}
+
+.tk-placement-radio {
+    width: 17px;
+    height: 17px;
+    border-radius: 50%;
+    border: 2px solid rgba(220, 224, 255, 0.6);
+    flex-shrink: 0;
+    position: relative;
+}
+
+.tk-placement-item.selected .tk-placement-radio {
+    border-color: #b8c6ff;
+}
+
+.tk-placement-item.selected .tk-placement-radio::after {
+    content: '';
+    position: absolute;
+    inset: 3px;
+    border-radius: 50%;
+    background: #b8c6ff;
+}
+
+.tk-mp-dropdown {
+    position: absolute;
+    top: calc(100% + 4px);
+    right: 0;
+    width: 320px;
+    max-width: calc(100vw - 48px);
+    background: #0c1420;
+    border: 1px solid rgba(74, 222, 128, 0.2);
+    border-radius: 6px;
+    z-index: 10050;
+    display: none;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+    max-height: 320px;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.tk-mp-dropdown.open {
+    display: flex;
+}
+
+.tk-mp-search-wrap {
+    padding: 8px 10px;
+    border-bottom: 1px solid rgba(74, 222, 128, 0.1);
+    position: sticky;
+    top: 0;
+    background: #0c1420;
+    z-index: 1;
+}
+
+.tk-mp-search {
+    width: 100%;
+    padding: 6px 10px;
+    border-radius: 4px;
+    border: 1px solid rgba(74, 222, 128, 0.15);
+    background: rgba(0, 0, 0, 0.3);
+    color: var(--tk-text);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.68rem;
+    outline: none;
+}
+
+.tk-mp-search::placeholder {
+    color: var(--tk-dim);
+}
+
+.tk-mp-search:focus {
+    border-color: rgba(74, 222, 128, 0.4);
+}
+
+.tk-mp-list {
+    overflow-y: auto;
+    overflow-x: hidden;
+    flex: 1;
+    max-height: 260px;
+    scrollbar-width: thin;
+    scrollbar-color: #1a2332 transparent;
+    scroll-behavior: smooth;
+    overscroll-behavior: contain;
+}
+
+.tk-mp-list::-webkit-scrollbar {
+    width: 4px;
+}
+
+.tk-mp-list::-webkit-scrollbar-thumb {
+    background: #1a2332;
+    border-radius: 2px;
+}
+
+.tk-mp-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 12px;
+    cursor: pointer;
+    transition: background 0.1s;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.63rem;
+}
+
+.tk-mp-item:hover {
+    background: rgba(74, 222, 128, 0.06);
+}
+
+.tk-mp-item.selected {
+    background: rgba(74, 222, 128, 0.1);
+}
+
+.tk-mp-radio {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    border: 2px solid var(--tk-dim);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.15s;
+}
+
+.tk-mp-item.selected .tk-mp-radio {
+    border-color: var(--tk-green);
+}
+
+.tk-mp-item.selected .tk-mp-radio::after {
+    content: '✓';
+    color: var(--tk-green);
+    font-size: 0.55rem;
+    font-weight: 700;
+}
+
+.tk-mp-item-info {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    flex: 1;
+    min-width: 0;
+}
+
+.tk-mp-model-name {
+    color: var(--tk-text);
+    font-weight: 500;
+    white-space: nowrap;
+}
+
+.tk-mp-model-meta {
+    color: var(--tk-dim);
+    font-size: 0.58rem;
+}
+
+.tk-mp-item.hidden {
+    display: none;
+}
+
+/* ── Sidebar menu item hook ── */
+#threadkeeper-menu-item {
+    color: #b39ddb;
+    position: relative;
+}
+
+#threadkeeper-menu-item .tk-new-badge {
+    font-size: 0.5rem;
+    padding: 1px 5px;
+    border-radius: 6px;
+    background: rgba(74, 222, 128, 0.15);
+    color: var(--tk-green);
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    margin-left: auto;
+}
+
+/* ── Responsive ── */
+@media (max-width: 700px) {
+    #threadkeeper-terminal {
+        width: 96vw;
+        max-height: 88vh;
+    }
+
+    .tk-filter-group {
+        display: none;
+    }
+
+    .tk-stats {
+        display: none;
+    }
+
+    .tk-cfg-row {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 6px;
+    }
+
+    .tk-mp-dropdown {
+        min-width: 280px;
+    }
+}
