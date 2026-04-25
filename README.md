@@ -7,7 +7,7 @@
 
 Threadkeeper extracts key facts from your chat messages using an LLM and quietly injects them into every prompt — so your model never forgets what matters, no matter how long the conversation gets.
 
-Built for [DreamTavern](https://github.com/selinawynters-ops/ST---ThreadKeeper) · SillyTavern Extension · v1.0.0
+Built for [DreamTavern](https://github.com/selinawynters-ops/ST---ThreadKeeper) · SillyTavern Extension · v1.0.2
 
 ---
 
