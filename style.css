@@ -1264,6 +1264,33 @@
     font-weight: 700;
     letter-spacing: 0.5px;
     margin-left: auto;
+    white-space: nowrap;
+}
+
+@keyframes tk-badge-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.35; }
+}
+
+#threadkeeper-menu-item .tk-scan-scanning {
+    background: rgba(167, 139, 250, 0.15);
+    color: var(--tk-purple);
+    animation: tk-badge-pulse 1s ease-in-out infinite;
+}
+
+#threadkeeper-menu-item .tk-scan-done {
+    background: rgba(74, 222, 128, 0.15);
+    color: var(--tk-green);
+}
+
+#threadkeeper-menu-item .tk-scan-idle {
+    background: rgba(75, 94, 111, 0.2);
+    color: var(--tk-dim);
+}
+
+#threadkeeper-menu-item .tk-scan-error {
+    background: rgba(251, 191, 36, 0.15);
+    color: var(--tk-amber);
 }
 
 /* ── Responsive ── */

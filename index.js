@@ -8,6 +8,7 @@
 
 import { debounce, waitUntilCondition } from '../../../utils.js';
 import { getContext, extension_settings, saveMetadataDebounced } from '../../../extensions.js';
+import { ConnectionManagerRequestService } from '../../shared.js';
 import {
     eventSource,
     event_types,
@@ -20,6 +21,7 @@ import {
     saveSettings,
     getRequestHeaders,
 } from '../../../../script.js';
+import { Popup } from '../../../popup.js';
 import { getTokenCountAsync } from '../../../tokenizers.js';
 import { debounce_timeout } from '../../../constants.js';
 import { SlashCommandParser } from '../../../slash-commands/SlashCommandParser.js';
@@ -394,6 +396,63 @@ function deleteFact(factId) {
     }
 }
 
+function parseFactEditInput(value, currentCategory) {
+    const text = String(value || '').trim();
+    if (!text) return null;
+
+    const match = text.match(/^(character|relationship|event|item|location|plot)\s*[:|/-]\s*(.+)$/i);
+    if (match) {
+        return {
+            category: match[1].toLowerCase(),
+            text: match[2].trim(),
+        };
+    }
+
+    return {
+        category: currentCategory,
+        text,
+    };
+}
+
+async function editFact(factId) {
+    const data = getTkData();
+    const fact = data.facts.find(f => f && f.id === factId);
+    if (!fact) return false;
+
+    const edited = await Popup.show.input(
+        'Edit fact',
+        'Edit the fact text. Optional format: `category | fact text`.',
+        `${fact.category} | ${fact.text}`,
+        { rows: 4, wide: true },
+    );
+
+    if (edited === null) {
+        return false;
+    }
+
+    const parsed = parseFactEditInput(edited, fact.category);
+    if (!parsed || !parsed.text) {
+        return false;
+    }
+
+    if (!CATEGORIES.includes(parsed.category)) {
+        addTerminalLine('<span class="tk-warn">Invalid fact category.</span>');
+        return false;
+    }
+
+    const duplicate = data.facts.some(other => other && other.id !== fact.id && other.text === parsed.text);
+    if (duplicate) {
+        addTerminalLine('<span class="tk-warn">A fact with that text already exists.</span>');
+        return false;
+    }
+
+    fact.category = parsed.category;
+    fact.text = parsed.text;
+    setTkData(data);
+    syncPinnedToGlobal();
+    return true;
+}
+
 function clearNonPinnedFacts() {
     const data = getTkData();
     data.facts = data.facts.filter(f => f && f.pinned);
@@ -572,19 +631,18 @@ async function runExtraction(fullRescan = false, logFn = null, progressFn = null
         const settings = getSettings();
         let lastScanned = getLastScannedIndex();
 
-        // Resolve which API backend and model to use for extraction (null = use ST's current active API/model)
-        let extractionApi = null;
-        let extractionSource = null;
-        let extractionModelField = null;
-        if (settings.connectionProfile && settings.connectionProfile !== '__current__') {
-            const profile = getSelectedConnectionProfile(settings.connectionProfile);
-            if (profile?.api) {
-                const apiConfig = CONNECT_API_MAP[String(profile.api).toLowerCase()];
-                extractionApi = apiConfig?.selected || profile.api;
-                extractionSource = apiConfig?.source || profile.api;
-                extractionModelField = TK_SOURCE_MODEL_FIELD[extractionSource] || null;
-            }
-        }
+        const selectedProfile = settings.connectionProfile && settings.connectionProfile !== '__current__'
+            ? getSelectedConnectionProfile(settings.connectionProfile)
+            : null;
+        const selectedApiConfig = selectedProfile?.api ? CONNECT_API_MAP[String(selectedProfile.api).toLowerCase()] : null;
+        const selectedBackend = selectedApiConfig?.selected || null;
+        const selectedSource = selectedApiConfig?.source || null;
+        const selectedModelField = selectedSource ? TK_SOURCE_MODEL_FIELD[selectedSource] || null : null;
+        const supportsProfileRequest = Boolean(
+            selectedProfile &&
+            selectedBackend &&
+            ['openai', 'textgenerationwebui'].includes(selectedBackend),
+        );
 
         if (fullRescan) {
             log(`<span class="tk-prompt">$</span> <span class="tk-cmd">re-extract --full</span>`);
@@ -639,31 +697,81 @@ async function runExtraction(fullRescan = false, logFn = null, progressFn = null
 
             let response;
             try {
-                // Temporarily point oai_settings at the selected model so generateRaw uses it.
-                // generateRaw has no model parameter — it reads oai_settings.chat_completion_source
-                // and the matching model field at call time.
-                const shouldOverrideModel = settings.model &&
-                    extractionApi === 'openai' &&
-                    extractionSource &&
-                    extractionModelField;
-                let savedSource, savedModel;
-                if (shouldOverrideModel) {
-                    savedSource = oai_settings.chat_completion_source;
-                    savedModel = oai_settings[extractionModelField];
-                    oai_settings.chat_completion_source = extractionSource;
-                    oai_settings[extractionModelField] = settings.model;
+                const secretKey = selectedProfile ? getSecretKeyForProfile(selectedProfile) : null;
+                const shouldOverrideSecret = Boolean(selectedProfile?.['secret-id'] && secretKey);
+                let savedSecretId = '';
+
+                if (shouldOverrideSecret) {
+                    savedSecretId = await SlashCommandParser.commands['secret-id'].callback(
+                        { quiet: 'true', key: secretKey },
+                        undefined,
+                    );
+                    await SlashCommandParser.commands['secret-id'].callback(
+                        { quiet: 'true', key: secretKey },
+                        selectedProfile['secret-id'],
+                    );
                 }
+
                 try {
-                    response = await generateRaw({
-                        prompt: prompt,
-                        systemPrompt: EXTRACTION_SYSTEM_PROMPT,
-                        responseLength: 1024,
-                        ...(extractionApi ? { api: extractionApi } : {}),
-                    });
+                    if (supportsProfileRequest) {
+                        const requestPrompt = [
+                            { role: 'system', content: EXTRACTION_SYSTEM_PROMPT },
+                            { role: 'user', content: prompt },
+                        ];
+                        const requestModel = settings.model || selectedProfile.model || undefined;
+                        const requestResult = await ConnectionManagerRequestService.sendRequest(
+                            selectedProfile.id,
+                            requestPrompt,
+                            1024,
+                            { includePreset: false, includeInstruct: false },
+                            {
+                                ...(requestModel ? { model: requestModel } : {}),
+                                temperature: settings.temperature,
+                            },
+                        );
+                        response = requestResult?.content ?? requestResult?.text ?? requestResult;
+                    } else {
+                        // Fallback path for unsupported profile types.
+                        // This preserves the current behavior for providers outside the
+                        // connection-manager request service.
+                        const shouldOverrideModel = settings.model &&
+                            selectedBackend === 'openai' &&
+                            selectedSource &&
+                            selectedModelField;
+                        let savedSource, savedModel, savedTemp;
+                        if (shouldOverrideModel) {
+                            savedSource = oai_settings.chat_completion_source;
+                            savedModel = oai_settings[selectedModelField];
+                            oai_settings.chat_completion_source = selectedSource;
+                            oai_settings[selectedModelField] = settings.model;
+                        }
+                        if (settings.temperature !== undefined) {
+                            savedTemp = oai_settings.temperature;
+                            oai_settings.temperature = settings.temperature;
+                        }
+                        try {
+                            response = await generateRaw({
+                                prompt: prompt,
+                                systemPrompt: EXTRACTION_SYSTEM_PROMPT,
+                                responseLength: 1024,
+                                ...(selectedBackend ? { api: selectedBackend } : {}),
+                            });
+                        } finally {
+                            if (shouldOverrideModel) {
+                                oai_settings.chat_completion_source = savedSource;
+                                oai_settings[selectedModelField] = savedModel;
+                            }
+                            if (settings.temperature !== undefined) {
+                                oai_settings.temperature = savedTemp;
+                            }
+                        }
+                    }
                 } finally {
-                    if (shouldOverrideModel) {
-                        oai_settings.chat_completion_source = savedSource;
-                        oai_settings[extractionModelField] = savedModel;
+                    if (shouldOverrideSecret && savedSecretId) {
+                        await SlashCommandParser.commands['secret-id'].callback(
+                            { quiet: 'true', key: secretKey },
+                            savedSecretId,
+                        );
                     }
                 }
             } catch (err) {
@@ -1105,6 +1213,7 @@ function addFactLine(fact) {
         <span class="fact-tag">${fact.category}</span>
         <span class="fact-body">${escapeHtml(fact.text)}</span>
         <span class="fact-actions-row">
+            <button class="tk-micro-btn edit-btn" data-action="edit" data-fact-id="${fact.id}" title="Edit fact">✎</button>
             <button class="tk-micro-btn pin-btn ${fact.pinned ? 'pinned' : ''}" data-action="pin" data-fact-id="${fact.id}" title="Pin — pinned facts are always remembered">📌</button>
             <button class="tk-micro-btn src-btn" data-action="source" data-source="${fact.sourceIndex}" title="Source message">↗${fact.sourceIndex}</button>
             <button class="tk-micro-btn del-btn" data-action="delete" data-fact-id="${fact.id}" title="Remove">✕</button>
@@ -1819,64 +1928,26 @@ async function fetchModelsForProfile(profile) {
         return modelCatalogCache.get(cacheKey);
     }
 
-    // Route through ST backend to avoid CORS — same endpoint ST uses for its own model lists
-    try {
-        const apiConfig = CONNECT_API_MAP[String(profile.api || '').toLowerCase()];
-        const chatCompletionSource = apiConfig?.source || profile.api;
-
-        const body = {
-            chat_completion_source: chatCompletionSource,
-        };
-        // Pass custom URL if profile has one
-        if (profile['api-url']) {
-            body.custom_url = profile['api-url'];
-        }
-        if (oai_settings?.reverse_proxy) {
-            body.reverse_proxy = oai_settings.reverse_proxy;
-            body.proxy_password = oai_settings.proxy_password;
-        }
-
-        const response = await fetch('/api/backends/chat-completions/status', {
-            method: 'POST',
-            headers: getRequestHeaders(),
-            body: JSON.stringify(body),
-            signal: AbortSignal.timeout(10000),
-        });
-
-        if (!response.ok) {
-            return [];
-        }
-
-        const responseData = await response.json();
-        const provider = profile.name || profile.api || '';
-
-        if (responseData.data && Array.isArray(responseData.data)) {
-            const models = responseData.data.map(m => ({
-                id: String(m.id || m.name || ''),
-                name: String(m.name || m.id || ''),
-                provider,
-            })).filter(m => m.id);
-            if (models.length > 0) {
-                modelCatalogCache.set(cacheKey, models);
-            }
-            return models;
-        }
-    } catch (error) {
-    }
-
-    // Fallback: try direct fetch (works for CORS-friendly APIs like OpenRouter)
+    // Try direct fetch first so the selected profile's own URL and secret are used.
     const endpoint = getModelsEndpointForProfile(profile);
     if (endpoint) {
         try {
             const secretKey = getSecretKeyForProfile(profile);
             const secretValue = secretKey && profile['secret-id'] ? await findSecret(secretKey, profile['secret-id']) : null;
+            const api = String(profile?.api || '').toLowerCase();
+            let resolvedEndpoint = endpoint;
+
+            if (api === 'makersuite' && secretValue) {
+                const separator = resolvedEndpoint.includes('?') ? '&' : '?';
+                resolvedEndpoint = `${resolvedEndpoint}${separator}key=${encodeURIComponent(secretValue)}`;
+            }
 
             const headers = {};
-            if (secretValue) {
+            if (secretValue && api !== 'makersuite') {
                 headers.Authorization = `Bearer ${secretValue}`;
             }
 
-            const response = await fetch(endpoint, {
+            const response = await fetch(resolvedEndpoint, {
                 method: 'GET',
                 headers,
                 signal: AbortSignal.timeout(8000),
@@ -1894,6 +1965,52 @@ async function fetchModelsForProfile(profile) {
         }
     }
 
+    // Fallback: only use the currently active ST profile state, which is safe
+    // for the live profile but not for profile switching.
+    try {
+        const currentProfileId = getCurrentConnectionProfileId();
+        if (profile.id === currentProfileId) {
+            const apiConfig = CONNECT_API_MAP[String(profile.api || '').toLowerCase()];
+            const chatCompletionSource = apiConfig?.source || profile.api;
+
+            const body = {
+                chat_completion_source: chatCompletionSource,
+            };
+            if (profile['api-url']) {
+                body.custom_url = profile['api-url'];
+            }
+            if (oai_settings?.reverse_proxy) {
+                body.reverse_proxy = oai_settings.reverse_proxy;
+                body.proxy_password = oai_settings.proxy_password;
+            }
+
+            const response = await fetch('/api/backends/chat-completions/status', {
+                method: 'POST',
+                headers: getRequestHeaders(),
+                body: JSON.stringify(body),
+                signal: AbortSignal.timeout(10000),
+            });
+
+            if (response.ok) {
+                const responseData = await response.json();
+                const provider = profile.name || profile.api || '';
+
+                if (responseData.data && Array.isArray(responseData.data)) {
+                    const models = responseData.data.map(m => ({
+                        id: String(m.id || m.name || ''),
+                        name: String(m.name || m.id || ''),
+                        provider,
+                    })).filter(m => m.id);
+                    if (models.length > 0) {
+                        modelCatalogCache.set(cacheKey, models);
+                    }
+                    return models;
+                }
+            }
+        }
+    } catch (error) {
+    }
+
     return [];
 }
 
@@ -1902,22 +2019,22 @@ async function getAvailableModels(profileId = getSettings().connectionProfile) {
 
     if (profile) {
         const currentProfileId = getCurrentConnectionProfileId();
-        const isCurrentConnectionProfile = profile.id === currentProfileId;
 
-        // Strategy 1: Read from the DOM model <select> for this profile's provider
-        const profileControl = getModelSelectElementForProfile(profile);
-
-        if (profileControl) {
-            const profileModels = readModelsFromControl(profileControl, profile);
-            if (profileModels.length > 0) {
-                if (profile.model && !profileModels.some(model => model.id === profile.model)) {
-                    profileModels.unshift({ id: profile.model, name: profile.model, provider: profile.name || profile.api || '' });
+        // Strategy 1: Read from the DOM model <select> only when this is the active profile.
+        if (profile.id === currentProfileId) {
+            const profileControl = getModelSelectElementForProfile(profile);
+            if (profileControl) {
+                const profileModels = readModelsFromControl(profileControl, profile);
+                if (profileModels.length > 0) {
+                    if (profile.model && !profileModels.some(model => model.id === profile.model)) {
+                        profileModels.unshift({ id: profile.model, name: profile.model, provider: profile.name || profile.api || '' });
+                    }
+                    return profileModels;
                 }
-                return profileModels;
             }
         }
 
-        // Strategy 2: Fetch through ST backend proxy (avoids CORS)
+        // Strategy 2: Fetch directly against the selected profile.
         const fetchedModels = await fetchModelsForProfile(profile);
         if (fetchedModels.length > 0) {
             if (profile.model && !fetchedModels.some(model => model.id === profile.model)) {
@@ -1930,11 +2047,6 @@ async function getAvailableModels(profileId = getSettings().connectionProfile) {
         if (profile.model) {
             return [{ id: profile.model, name: profile.model, provider: profile.name || profile.api || '' }];
         }
-
-        // Strategy 4: Read from whichever model select is currently populated
-        const domModels = readModelsFromAnySelect();
-        if (domModels.length > 0) return domModels;
-
         return [];
     }
 
@@ -2026,7 +2138,7 @@ function syncUIFromSettings() {
     if (maxFacts) maxFacts.value = String(settings.maxFacts || 100);
 
     const autoScan = document.getElementById('tk-cfg-autoscan');
-    if (autoScan) autoScan.value = String(settings.autoScanInterval || 10);
+    if (autoScan) autoScan.value = String(settings.autoScanInterval ?? DEFAULT_SETTINGS.autoScanInterval);
 
     const crossChat = document.getElementById('tk-cfg-crosschat');
     if (crossChat) crossChat.checked = settings.crossChatPinned !== false;
@@ -2204,7 +2316,7 @@ function attachEventListeners() {
     // Fact action buttons (delegated)
     const body = document.getElementById('tk-body');
     if (body) {
-        body.addEventListener('click', (e) => {
+        body.addEventListener('click', async (e) => {
             const btn = e.target.closest('[data-action]');
             if (!btn) return;
 
@@ -2216,6 +2328,12 @@ function attachEventListeners() {
                 btn.classList.toggle('pinned');
                 updateStats();
                 injectFacts();
+            } else if (action === 'edit') {
+                const success = await editFact(factId);
+                if (success) {
+                    refreshTerminalContent();
+                    await injectFacts();
+                }
             } else if (action === 'delete') {
                 deleteFact(factId);
                 const factEl = btn.closest('.tk-fact');
@@ -2287,8 +2405,36 @@ function onNewMessage() {
     messagesSinceLastScan++;
 
     if (settings.autoScanInterval > 0 && messagesSinceLastScan >= settings.autoScanInterval) {
+        const badge = document.getElementById('tk-auto-scan-badge');
+        if (badge) {
+            badge.textContent = 'scanning…';
+            badge.className = 'tk-new-badge tk-scan-scanning';
+            badge.style.display = '';
+        }
+
+        const factsBefore = getFacts().length;
+
         runExtraction(false).then(() => {
+            const newCount = getFacts().length - factsBefore;
             if (isTerminalOpen) refreshTerminalContent();
+            if (badge) {
+                badge.textContent = newCount > 0 ? `✓ ${newCount} new` : '✓ done';
+                badge.className = `tk-new-badge ${newCount > 0 ? 'tk-scan-done' : 'tk-scan-idle'}`;
+                setTimeout(() => {
+                    badge.style.display = 'none';
+                    badge.className = 'tk-new-badge';
+                }, newCount > 0 ? 5000 : 2000);
+            }
+        }).catch((err) => {
+            console.error('[ThreadKeeper] Auto-scan error:', err);
+            if (badge) {
+                badge.textContent = '⚠ scan failed';
+                badge.className = 'tk-new-badge tk-scan-error';
+                setTimeout(() => {
+                    badge.style.display = 'none';
+                    badge.className = 'tk-new-badge';
+                }, 4000);
+            }
         });
     }
 }
@@ -2359,7 +2505,8 @@ function createMenuButton() {
         <span class="tk-menu-icon">
             ${MEMORY_ORB_SVG_SMALL}
         </span>
-        <span class="tk-menu-label">ThreadKeeper</span>`;
+        <span class="tk-menu-label">ThreadKeeper</span>
+        <span class="tk-new-badge" id="tk-auto-scan-badge" style="display:none"></span>`;
     btn.addEventListener('click', () => {
         if (isTerminalOpen) {
             closeTerminal();
