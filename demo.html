@@ -404,6 +404,21 @@
   .cfg-pill:hover { color: var(--term-text); border-color: rgba(167,139,250,0.3); }
   .cfg-pill.active { background: rgba(167,139,250,0.12); border-color: rgba(167,139,250,0.4); color: var(--term-purple); }
 
+  /* Dog Me Out button styling */
+  #cfgTone .cfg-pill[data-v="Dog Me Out"] {
+    border-color: rgba(248, 113, 113, 0.25);
+    color: rgba(248, 113, 113, 0.7);
+  }
+  #cfgTone .cfg-pill[data-v="Dog Me Out"]:hover {
+    border-color: rgba(248, 113, 113, 0.4);
+    color: #f87171;
+  }
+  #cfgTone .cfg-pill[data-v="Dog Me Out"].active {
+    background: rgba(248, 113, 113, 0.15);
+    border-color: rgba(248, 113, 113, 0.5);
+    color: #f87171;
+  }
+
   /* Advanced section collapsible */
   .cfg-advanced-toggle {
     font-size: 0.65rem; color: var(--term-dim); cursor: pointer;
@@ -743,6 +758,32 @@
           </div>
           <label class="cfg-toggle"><input type="checkbox"><span class="slider"></span></label>
         </div>
+        <div class="cfg-row">
+          <div class="cfg-label">
+            Extraction tone
+            <span class="cfg-hint">Polite = clean neutral facts · Dog Me Out = raw, explicit, unfiltered</span>
+          </div>
+          <div class="cfg-pills" id="cfgTone">
+            <button class="cfg-pill active" data-v="Polite">Polite</button>
+            <button class="cfg-pill" data-v="Dog Me Out">Dog Me Out</button>
+          </div>
+        </div>
+        <div class="cfg-row">
+          <div class="cfg-label">
+            Facts per batch
+            <span class="cfg-hint">Min and max facts to extract in each LLM call</span>
+          </div>
+          <div style="display:flex;gap:12px;align-items:center;">
+            <div style="display:flex;align-items:center;gap:6px;">
+              <label style="font-size:0.75rem;color:var(--term-dim);">min</label>
+              <input type="number" class="cfg-number" id="cfgMinFacts" value="1" min="1" max="100" style="width:60px;">
+            </div>
+            <div style="display:flex;align-items:center;gap:6px;">
+              <label style="font-size:0.75rem;color:var(--term-dim);">max</label>
+              <input type="number" class="cfg-number" id="cfgMaxFacts" value="15" min="1" max="100" style="width:60px;">
+            </div>
+          </div>
+        </div>
       </div>
 
       <!-- Advanced (collapsed) -->
@@ -831,7 +872,7 @@ const MESSAGES = [
   { id: 8, role: 'char', sender: 'Lyra Shadowmend', text: `*Throws up a barrier of shadow and starlight.* "Don't touch it! That's a Watcher's Lure — Thalric used them as traps. It sends your location to whoever placed it." *Scans with her silver eye.* "He's been here within three days — the binding fades after seventy-two hours. We need to move. Eastern passage to the old aqueducts — I know a safehouse near the Duskmarket."` },
 ];
 
-const FACTS = [
+const FACTS_POLITE = [
   { cat: 'character', text: "Lyra Shadowmend: mismatched eyes — left amber, right pale silver. Silver eye sees magical threads invisible to others.", src: 2 },
   { cat: 'character', text: "Lyra wields a staff of woven shadows. Shadows respond to her emotions, curling protectively around her.", src: 2 },
   { cat: 'character', text: "Thalric: Lyra's former mentor. Believed dead at the Siege of Duskhollow — evidence suggests he survived.", src: 2 },
@@ -850,6 +891,28 @@ const FACTS = [
   { cat: 'plot', text: "Dreaming Court shattered the Moonveil Blade during the War of Whispered Names.", src: 6 },
   { cat: 'plot', text: "Immediate plan: flee east to Duskmarket safehouse → pursue Shard #2 at Drowned Library.", src: 8 },
 ];
+
+const FACTS_DOG_ME_OUT = [
+  { cat: 'character', text: "Lyra Shadowmend: fucked-up heterochromatic eyes — amber and pale silver. Silver eye sees shit nobody else can perceive.", src: 2 },
+  { cat: 'character', text: "Lyra's a fucking control freak with her shadows — they coil around her like a possessive lover when she's pissed.", src: 2 },
+  { cat: 'character', text: "Thalric: Her bastard of a former mentor. Supposedly got his shit pushed in at the Siege of Duskhollow, but the fucker clearly survived.", src: 2 },
+  { cat: 'relationship', text: "Lyra ↔ Thalric: Ex mentor-student dynamic that turned antagonistic. She can read his binding signatures like a book.", src: 2 },
+  { cat: 'item', text: "Moonveil Blade (shattered to shit, 3 pieces): can break magical bindings without obliterating whoever's bound. Terrifies the Covenant of Echoes.", src: 4 },
+  { cat: 'item', text: "Shard #1: shoved in Dreamweaver's satchel, vibrates when there's active magic nearby.", src: 1 },
+  { cat: 'item', text: "Enchanted short sword: truth-forcing charm, magicked up by Lyra in Chapter 7.", src: 3 },
+  { cat: 'item', text: "Seraphine's Journal: full of encrypted maps and nasty equations. Pulled from the Whispering Vault. Has all 3 shard locations.", src: 5 },
+  { cat: 'item', text: "Watcher's Lure: silver ring trap on the Hollow Throne. Broadcasts whoever touches it. Binding deteriorates after 72 hours.", src: 8 },
+  { cat: 'location', text: "Shard #2: buried in the Drowned Library under Lake Meren's fucking depths.", src: 5 },
+  { cat: 'location', text: "Right here: Hollow Throne room — ancient wards still alive, pulsing with Thalric's binding signatures.", src: 2 },
+  { cat: 'location', text: "Safehouse hidden near Duskmarket, accessible through the eastern passage and old aqueducts.", src: 8 },
+  { cat: 'event', text: "Thalric's been here within the last 72 hours. The fucking Watcher's Lure proves it.", src: 8 },
+  { cat: 'plot', text: "Shard #3 is a Soul Anchor wedged in someone's body. Pull it out without the complete Blade? That person's fucking dead.", src: 6 },
+  { cat: 'plot', text: "Covenant of Echoes: won't die just because its members do. It's woven into the ley lines under the Athenaeum.", src: 4 },
+  { cat: 'plot', text: "Dreaming Court destroyed the Moonveil Blade during that shit show called the War of Whispered Names.", src: 6 },
+  { cat: 'plot', text: "Plan: haul ass east to Duskmarket safehouse, then hit up the Drowned Library for Shard #2.", src: 8 },
+];
+
+let FACTS = FACTS_POLITE;
 
 // ══════════════════════════════════════════════════════════════════
 // STATE
@@ -1242,6 +1305,41 @@ document.getElementById('cfgBudget').addEventListener('click', (e) => {
   if (!pill) return;
   document.querySelectorAll('#cfgBudget .cfg-pill').forEach(p => p.classList.remove('active'));
   pill.classList.add('active');
+});
+
+// Tone pills
+document.getElementById('cfgTone').addEventListener('click', (e) => {
+  const pill = e.target.closest('.cfg-pill');
+  if (!pill) return;
+  document.querySelectorAll('#cfgTone .cfg-pill').forEach(p => p.classList.remove('active'));
+  pill.classList.add('active');
+
+  // Swap facts based on selected tone
+  const selectedTone = pill.dataset.v;
+  FACTS = selectedTone === 'Dog Me Out' ? FACTS_DOG_ME_OUT : FACTS_POLITE;
+
+  // Reload facts in the terminal
+  body.innerHTML = '';
+  addLine(`<span class="term-prompt">dreamtavern</span> <span class="term-dim">~</span> <span class="term-cmd">threadkeeper v1.0</span>`);
+  addLine(`<span class="term-dim">Loaded chat: Lyra Shadowmend · 8 messages</span>`);
+  addLine(`<span class="term-dim">${FACTS.length} facts in memory (0 pinned)</span>`);
+  addLine(`<br>`);
+  FACTS.forEach((fact, idx) => addFact(fact, idx));
+  addLine(`<br>`);
+  addLine(`<span class="term-info">8 messages scanned</span>`);
+  addCursor();
+  updateStats();
+});
+
+// Facts per batch inputs
+document.getElementById('cfgMinFacts').addEventListener('change', (e) => {
+  const val = Math.max(1, parseInt(e.target.value) || 1);
+  e.target.value = val;
+});
+
+document.getElementById('cfgMaxFacts').addEventListener('change', (e) => {
+  const val = Math.max(1, parseInt(e.target.value) || 15);
+  e.target.value = val;
 });
 
 // ══════════════════════════════════════════════════════════════════

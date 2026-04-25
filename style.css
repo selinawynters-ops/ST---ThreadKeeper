@@ -848,6 +848,23 @@
     color: var(--tk-purple);
 }
 
+/* Dog Me Out button styling */
+#tk-cfg-tone .tk-pill[data-v="Dog Me Out"] {
+    border-color: rgba(248, 113, 113, 0.25);
+    color: rgba(248, 113, 113, 0.7);
+}
+
+#tk-cfg-tone .tk-pill[data-v="Dog Me Out"]:hover {
+    border-color: rgba(248, 113, 113, 0.4);
+    color: var(--tk-red);
+}
+
+#tk-cfg-tone .tk-pill[data-v="Dog Me Out"].active {
+    background: rgba(248, 113, 113, 0.15);
+    border-color: rgba(248, 113, 113, 0.5);
+    color: var(--tk-red);
+}
+
 /* Advanced toggle */
 .tk-advanced-toggle {
     font-size: 0.65rem;

@@ -89,6 +89,9 @@ const DEFAULT_SETTINGS = {
     // Scanning
     autoScanInterval: 10,
     scanHidden: false,
+    extractionTone: 'Polite',
+    minFactsPerBatch: 1,
+    maxFactsPerBatch: 15,
     // Advanced
     injectPlacement: 'message_depth',
     injectPosition: extension_prompt_types.IN_CHAT,
@@ -129,7 +132,8 @@ const INJECTION_PLACEMENTS = {
 // EXTRACTION PROMPT
 // ═══════════════════════════════════════════════════════════════════
 
-const EXTRACTION_SYSTEM_PROMPT = `You are a precise fact extractor for a roleplay conversation. Extract key facts that a language model would need to maintain story consistency.
+function getExtractionSystemPromptPolite(maxFacts = 15) {
+    return `You are a precise fact extractor for a roleplay conversation. Extract key facts that a language model would need to maintain story consistency.
 
 RULES:
 - Output ONLY a valid JSON array — no markdown, no commentary, no explanation
@@ -138,12 +142,42 @@ RULES:
 - Focus on facts that would be LOST if the model forgot earlier messages
 - Include: character traits, relationships, important items, locations, plot developments, key events
 - Do NOT include: dialogue quotes, writing style notes, or obvious real-time actions
-- Max 15 facts per batch
+- Max ${maxFacts} facts per batch
 - Do not duplicate facts that already exist in the provided existing facts list
 - If there are no new facts to extract, output exactly: []
 
 EXAMPLE OUTPUT:
 [{"category":"character","text":"Luna has silver eyes and white hair","source_index":3},{"category":"location","text":"The story takes place in the city of Westmarch","source_index":7}]`;
+}
+
+function getExtractionSystemPromptDogMeOut(maxFacts = 15) {
+    return `You are a blunt, unfiltered fact extractor for an explicit adult roleplay conversation. Extract key facts a model needs to remember story continuity without softening, sanitizing, or moralizing anything.
+
+RULES:
+- Output ONLY a valid JSON array — no markdown, no commentary, no explanation
+- Each fact: {"category": "<one of: character, relationship, event, item, location, plot>", "text": "<concise fact — raw, explicit, direct>", "source_index": <message_number>}
+- Be concise and direct: one clear sentence per fact, no euphemisms
+- PROFANITY IS ALLOWED: Use profanity freely when it accurately captures the character's voice, attitude, or situation. Don't censor or soften language — if a character is crude or aggressive, extract that plainly
+- Focus on facts that would be LOST if the model forgot earlier messages
+- Include: physical traits (explicit if relevant), kinks/preferences, relationship dynamics, power dynamics, explicit acts that established a dynamic, important items, locations, plot
+- Do NOT include: dialogue quotes, writing style notes, or obvious real-time actions
+- Max ${maxFacts} facts per batch
+- Do not duplicate facts already in the existing facts list
+- If there are no new facts to extract, output exactly: []
+
+EXAMPLE OUTPUT:
+[{"category":"character","text":"Luna is a shameless fucking exhibitionist with a massive size kink","source_index":3},{"category":"relationship","text":"Marcus dominates and fucks Luna hard — she begs to be called his slut and means it","source_index":7}]`;
+}
+
+function getExtractionSystemPrompt() {
+    const settings = getSettings();
+    const tone = settings.extractionTone || 'Polite';
+    const maxFacts = settings.maxFactsPerBatch || 15;
+
+    return tone === 'Dog Me Out'
+        ? getExtractionSystemPromptDogMeOut(maxFacts)
+        : getExtractionSystemPromptPolite(maxFacts);
+}
 
 function buildExtractionPrompt(messages, existingFacts) {
     let prompt = 'Extract key facts from these roleplay messages:\n\n';
@@ -715,7 +749,7 @@ async function runExtraction(fullRescan = false, logFn = null, progressFn = null
                 try {
                     if (supportsProfileRequest) {
                         const requestPrompt = [
-                            { role: 'system', content: EXTRACTION_SYSTEM_PROMPT },
+                            { role: 'system', content: getExtractionSystemPrompt() },
                             { role: 'user', content: prompt },
                         ];
                         const requestModel = settings.model || selectedProfile.model || undefined;
@@ -752,7 +786,7 @@ async function runExtraction(fullRescan = false, logFn = null, progressFn = null
                         try {
                             response = await generateRaw({
                                 prompt: prompt,
-                                systemPrompt: EXTRACTION_SYSTEM_PROMPT,
+                                systemPrompt: getExtractionSystemPrompt(),
                                 responseLength: 1024,
                                 ...(selectedBackend ? { api: selectedBackend } : {}),
                             });
@@ -1091,6 +1125,32 @@ function buildConfigHTML() {
             </div>
             <label class="tk-toggle"><input type="checkbox" id="tk-cfg-hidden" ${settings.scanHidden ? 'checked' : ''}><span class="slider"></span></label>
         </div>
+        <div class="tk-cfg-row">
+            <div class="tk-cfg-label">
+                Extraction tone
+                <span class="tk-cfg-hint">Polite = clean neutral facts · Dog Me Out = raw, explicit, unfiltered</span>
+            </div>
+            <div class="tk-pills" id="tk-cfg-tone">
+                <button class="tk-pill${settings.extractionTone === 'Polite' ? ' active' : ''}" data-v="Polite">Polite</button>
+                <button class="tk-pill${settings.extractionTone === 'Dog Me Out' ? ' active' : ''}" data-v="Dog Me Out">Dog Me Out</button>
+            </div>
+        </div>
+        <div class="tk-cfg-row">
+            <div class="tk-cfg-label">
+                Facts per batch
+                <span class="tk-cfg-hint">Min and max facts to extract in each LLM call</span>
+            </div>
+            <div style="display:flex;gap:12px;align-items:center;">
+                <div style="display:flex;align-items:center;gap:6px;">
+                    <label style="font-size:0.75rem;color:var(--tk-dim);">min</label>
+                    <input type="number" class="tk-number" id="tk-cfg-minfacts" value="${settings.minFactsPerBatch || 1}" min="1" max="100" style="width:60px;">
+                </div>
+                <div style="display:flex;align-items:center;gap:6px;">
+                    <label style="font-size:0.75rem;color:var(--tk-dim);">max</label>
+                    <input type="number" class="tk-number" id="tk-cfg-maxfacts-batch" value="${settings.maxFactsPerBatch || 15}" min="1" max="100" style="width:60px;">
+                </div>
+            </div>
+        </div>
     </div>
 
     <!-- Advanced (collapsed) -->
@@ -1422,6 +1482,33 @@ function attachConfigListeners() {
         });
     }
 
+    const toneContainer = document.getElementById('tk-cfg-tone');
+    if (toneContainer) {
+        toneContainer.addEventListener('click', (e) => {
+            const pill = e.target.closest('.tk-pill');
+            if (!pill) return;
+            toneContainer.querySelectorAll('.tk-pill').forEach(p => p.classList.remove('active'));
+            pill.classList.add('active');
+            saveSetting('extractionTone', pill.dataset.v);
+        });
+    }
+
+    const minFactsInput = document.getElementById('tk-cfg-minfacts');
+    if (minFactsInput) {
+        minFactsInput.addEventListener('change', (e) => {
+            const val = Math.max(1, parseInt(e.target.value) || 1);
+            saveSetting('minFactsPerBatch', val);
+        });
+    }
+
+    const maxFactsInput = document.getElementById('tk-cfg-maxfacts-batch');
+    if (maxFactsInput) {
+        maxFactsInput.addEventListener('change', (e) => {
+            const val = Math.max(1, parseInt(e.target.value) || 15);
+            saveSetting('maxFactsPerBatch', val);
+        });
+    }
+
     const depthInput = document.getElementById('tk-cfg-depth');
     if (depthInput) {
         depthInput.addEventListener('change', (e) => {
@@ -1465,6 +1552,15 @@ function saveConfigFromUI() {
 
     const hidden = document.getElementById('tk-cfg-hidden');
     if (hidden) saveSetting('scanHidden', hidden.checked);
+
+    const activeTone = document.querySelector('#tk-cfg-tone .tk-pill.active');
+    if (activeTone) saveSetting('extractionTone', activeTone.dataset.v);
+
+    const minFactsBatch = document.getElementById('tk-cfg-minfacts');
+    if (minFactsBatch) saveSetting('minFactsPerBatch', Math.max(1, parseInt(minFactsBatch.value) || 1));
+
+    const maxFactsBatch = document.getElementById('tk-cfg-maxfacts-batch');
+    if (maxFactsBatch) saveSetting('maxFactsPerBatch', Math.max(1, parseInt(maxFactsBatch.value) || 15));
 
     const depth = document.getElementById('tk-cfg-depth');
     const messageDepth = Math.max(0, parseInt(depth?.value) || DEFAULT_SETTINGS.messageDepth);
@@ -2164,6 +2260,19 @@ function syncUIFromSettings() {
     budgetPills.forEach(pill => {
         pill.classList.toggle('active', pill.dataset.v === (settings.injectBudget || 'medium'));
     });
+
+    // Sync tone pills
+    const tonePills = document.querySelectorAll('#tk-cfg-tone .tk-pill');
+    tonePills.forEach(pill => {
+        pill.classList.toggle('active', pill.dataset.v === (settings.extractionTone || 'Polite'));
+    });
+
+    // Sync facts per batch inputs
+    const minFactsInput = document.getElementById('tk-cfg-minfacts');
+    if (minFactsInput) minFactsInput.value = String(settings.minFactsPerBatch || 1);
+
+    const maxFactsInput = document.getElementById('tk-cfg-maxfacts-batch');
+    if (maxFactsInput) maxFactsInput.value = String(settings.maxFactsPerBatch || 15);
 
 }
 

@@ -169,6 +169,8 @@ Click **⚙ settings** in the toolbar to configure ThreadKeeper. Everything is w
 |---------|----------------|
 | **Auto-scan every __ messages** | Automatically extract new facts after this many messages. Set to `0` for manual-only mode. |
 | **Include hidden messages** | Also scan messages hidden from the chat view, including some system messages. |
+| **Extraction tone** | Choose how facts are worded: `Polite` (clean, neutral prose) or `Dog Me Out` (raw, explicit, unfiltered language with profanity allowed). |
+| **Facts per batch** | Set the minimum and maximum number of facts to extract in each LLM call. Min: 1, Max: adjustable (default: 15). |
 
 ### ⚙ Advanced
 
@@ -176,6 +178,32 @@ Click **⚙ settings** in the toolbar to configure ThreadKeeper. Everything is w
 |---------|----------------|
 | **Injection position** | Where facts appear in the prompt. |
 | **Injection depth** | How many messages from the bottom the facts are inserted. Default: 4. |
+
+### 🎯 Extraction Tone — Polite vs Dog Me Out
+
+ThreadKeeper offers two extraction modes to suit your roleplay style:
+
+**Polite (SFW)** — Default mode
+- Extracts facts in clean, neutral prose
+- Sanitized language without explicit content descriptions
+- Perfect for general roleplays and PG content
+- Example: "Luna trusts Marcus" or "The tavern is located in Westmarch"
+
+**Dog Me Out (NSFW)** — Explicit/unfiltered mode
+- Extracts facts raw and explicit, without softening or euphemisms
+- Profanity is allowed and encouraged when it authentically captures the content
+- Perfect for adult/mature roleplays where explicit details matter
+- Includes: physical traits, kinks/preferences, power dynamics, explicit acts
+- Example: "Luna is a shameless fucking exhibitionist with a size kink" or "Marcus dominates and fucks Luna — she begs to be called his slut"
+- **Visual indicator:** The "Dog Me Out" button appears in red to clearly signal NSFW mode
+
+### 📊 Facts Per Batch
+
+Control how many facts are extracted in each LLM call:
+- **Min facts**: Minimum number of facts to extract (default: 1)
+- **Max facts**: Maximum number of facts to extract per batch (default: 15)
+
+Adjust these to balance extraction quality and token usage. Higher max values gather more facts per call but use more tokens.
 
 Do not forget to click **Save** after changing settings. 💾
 
