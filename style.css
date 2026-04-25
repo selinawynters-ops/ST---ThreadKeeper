@@ -1,6 +1,6 @@
 /* ═══════════════════════════════════════════════════════
    THREADKEEPER — Terminal-style Key Facts UI
-   DreamTavern Extension · v1.0.2
+   DreamTavern Extension · v1.0.0
    ═══════════════════════════════════════════════════════ */
 
 :root {
@@ -428,6 +428,10 @@
     border-left-color: #fb923c;
 }
 
+.tk-fact.cat-timeline {
+    border-left-color: #38bdf8;
+}
+
 .tk-fact .fact-tag {
     font-size: 0.58rem;
     text-transform: uppercase;
@@ -458,6 +462,10 @@
 
 .tk-fact.cat-plot .fact-tag {
     color: #fb923c;
+}
+
+.tk-fact.cat-timeline .fact-tag {
+    color: #38bdf8;
 }
 
 .tk-fact .fact-body {
@@ -499,6 +507,18 @@
     border-color: var(--tk-amber);
     color: var(--tk-amber);
     background: rgba(251, 191, 36, 0.08);
+}
+
+.tk-micro-btn.edit-btn {
+    font-size: 0.7rem;
+    border-color: #38bdf8;
+    color: #38bdf8;
+}
+
+.tk-micro-btn.edit-btn:hover {
+    border-color: #38bdf8;
+    color: #38bdf8;
+    background: rgba(56, 189, 248, 0.08);
 }
 
 .tk-micro-btn.del-btn:hover {
