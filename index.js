@@ -1,6 +1,6 @@
 /**
  * Threadkeeper — LLM Memory for Long Roleplays
- * DreamTavern Extension · v1.0.2
+ * DreamTavern Extension · v1.0.0
  *
  * Extracts key facts from chat messages using an LLM and injects them
  * into the prompt so the model never forgets what matters.
