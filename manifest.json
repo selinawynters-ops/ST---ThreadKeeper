@@ -6,7 +6,7 @@
     "js": "index.js",
     "css": "style.css",
     "author": "Dreamweaver (selinawynters-ops)",
-    "version": "1.0.2",
+    "version": "1.0.0",
     "description": "LLM-powered memory for long roleplays. Extracts key facts from chat messages and injects them into the prompt so your model never forgets what matters.",
     "homePage": "https://github.com/selinawynters-ops/ST---ThreadKeeper",
     "auto_update": true
