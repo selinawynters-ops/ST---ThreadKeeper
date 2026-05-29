@@ -1,6 +1,6 @@
 /* ═══════════════════════════════════════════════════════
    THREADKEEPER — Terminal-style Key Facts UI
-   DreamTavern Extension · v1.0.2
+   DreamTavern Extension · v1.0.3
    ═══════════════════════════════════════════════════════ */
 
 :root {
@@ -69,17 +69,118 @@
     z-index: 10000;
     opacity: 0;
     pointer-events: none;
-    transition: opacity 0.25s ease;
     display: flex;
-    align-items: center;
+    /* Top-align so a tall terminal scrolls naturally instead of being clipped
+       by viewport-centering. The overlay itself becomes the single scroll
+       container — the whole interface scrolls as one. */
+    align-items: flex-start;
     justify-content: center;
     background: rgba(0, 0, 0, 0.5);
     backdrop-filter: blur(3px);
+    overflow-y: auto;
+    overflow-x: hidden;
+    /* Generous vertical padding so the terminal isn't pinned against the
+       viewport edges, and tap-to-close lands on a clearly empty area rather
+       than something the user might be reading. */
+    padding: 48px 16px;
+    box-sizing: border-box;
+    scrollbar-width: thin;
+    scrollbar-color: #1a2332 transparent;
+}
+
+#threadkeeper-overlay::-webkit-scrollbar {
+    width: 6px;
+}
+
+#threadkeeper-overlay::-webkit-scrollbar-thumb {
+    background: #1a2332;
+    border-radius: 3px;
 }
 
 #threadkeeper-overlay.open {
     opacity: 1;
     pointer-events: all;
+}
+
+#tk-auto-scan-popup {
+    position: fixed;
+    right: 18px;
+    bottom: 18px;
+    width: 280px;
+    max-width: calc(100vw - 24px);
+    padding: 10px 12px;
+    border: 1px solid rgba(74, 222, 128, 0.22);
+    border-radius: 10px;
+    background: rgba(9, 14, 26, 0.96);
+    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.42), 0 0 24px rgba(34, 211, 238, 0.08);
+    font-family: 'JetBrains Mono', 'Cascadia Code', 'Fira Code', monospace;
+    z-index: 10060;
+    opacity: 0;
+    transform: translateY(8px);
+    pointer-events: none;
+    transition: opacity 0.18s ease, transform 0.18s ease, border-color 0.18s ease;
+}
+
+#tk-auto-scan-popup.visible {
+    opacity: 1;
+    transform: translateY(0);
+}
+
+#tk-auto-scan-popup.success {
+    border-color: rgba(74, 222, 128, 0.35);
+}
+
+#tk-auto-scan-popup.error {
+    border-color: rgba(251, 191, 36, 0.35);
+}
+
+.tk-auto-scan-popup-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+    color: var(--tk-dim);
+    font-size: 0.68rem;
+    letter-spacing: 0.4px;
+}
+
+.tk-auto-scan-popup-icon {
+    width: 14px;
+    height: 14px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.tk-auto-scan-popup-title {
+    text-transform: lowercase;
+}
+
+.tk-auto-scan-popup-body {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.tk-auto-scan-popup-line {
+    color: var(--tk-green);
+    font-size: 0.72rem;
+    line-height: 1.35;
+}
+
+.tk-auto-scan-popup-line::before {
+    content: '$ ';
+    color: var(--tk-dim);
+}
+
+.tk-auto-scan-popup-line2 {
+    color: var(--tk-cyan);
+    font-size: 0.66rem;
+}
+
+#tk-auto-scan-popup.error .tk-auto-scan-popup-line {
+    color: var(--tk-amber);
 }
 
 /* ── Mobile close hint (hidden on desktop) ── */
@@ -93,21 +194,18 @@
     z-index: 1;
     width: 580px;
     max-width: 94vw;
-    max-height: 84vh;
+    /* No max-height clamp — the terminal grows with its content and the
+       overlay handles scrolling. Inner panels (body, config, archive) also
+       grow naturally so the entire interface scrolls as one unit. */
     display: flex;
     flex-direction: column;
+    flex-shrink: 0;
     background: var(--tk-bg);
     border: 1px solid rgba(74, 222, 128, 0.2);
     border-radius: 10px;
     box-shadow: 0 8px 48px rgba(0, 0, 0, 0.6), 0 0 30px var(--tk-glow);
-    transition: transform 0.25s ease;
-    overflow-y: auto;
-    overflow-x: hidden;
+    overflow: visible;
     font-family: 'JetBrains Mono', 'Cascadia Code', 'Fira Code', monospace;
-    transform: scale(0.95);
-    scrollbar-width: thin;
-    scrollbar-color: #1a2332 transparent;
-    scroll-behavior: smooth;
 }
 
 #threadkeeper-terminal::-webkit-scrollbar {
@@ -119,9 +217,6 @@
     border-radius: 3px;
 }
 
-#threadkeeper-overlay.open #threadkeeper-terminal {
-    transform: scale(1);
-}
 
 /* ── Header ── */
 .tk-header {
@@ -312,19 +407,90 @@
     color: var(--tk-purple);
 }
 
+/* ── Search bars (active facts + archive) ── */
+.tk-search-wrap {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+}
+
+.tk-search-input {
+    padding: 3px 22px 3px 8px; /* right pad leaves room for the ✕ */
+    border-radius: 3px;
+    border: 1px solid rgba(74, 222, 128, 0.15);
+    background: rgba(0, 0, 0, 0.3);
+    color: var(--tk-text);
+    font-family: inherit;
+    outline: none;
+}
+
+.tk-search-input::placeholder {
+    color: var(--tk-dim);
+}
+
+.tk-search-input:focus {
+    border-color: rgba(74, 222, 128, 0.4);
+}
+
+.tk-search-clear {
+    position: absolute;
+    right: 3px;
+    display: none; /* shown only once the field has text — see rule below */
+    border: none;
+    background: transparent;
+    color: var(--tk-dim);
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 0.62rem;
+    line-height: 1;
+    padding: 2px 4px;
+}
+
+.tk-search-clear:hover {
+    color: var(--tk-text);
+}
+
+/* The clear ✕ appears only while the input holds a value. */
+.tk-search-input:not(:placeholder-shown) + .tk-search-clear {
+    display: block;
+}
+
+/* Active-facts searchbar — sits in the toolbar beside the category filters. */
+.tk-fact-search-wrap {
+    margin-left: auto;
+}
+
+.tk-fact-search {
+    width: 140px;
+    font-size: 0.62rem;
+}
+
+/* Archive searchbar — full-width row under the archive header. */
+.tk-archive-search-wrap {
+    padding: 10px 16px 0;
+}
+
+.tk-archive-search-wrap .tk-search-wrap {
+    display: flex;
+    width: 100%;
+}
+
+.tk-archive-search {
+    width: 100%;
+    box-sizing: border-box;
+    padding-top: 7px;
+    padding-bottom: 7px;
+    font-size: 0.7rem;
+}
+
 /* ── Terminal Body ── */
 .tk-body {
-    flex: 1 1 auto;
-    overflow-y: auto;
-    overflow-x: hidden;
+    /* Grow with content — the overlay scrolls, not this panel. */
+    flex: 0 0 auto;
+    overflow: visible;
     padding: 12px 14px;
     font-size: 0.75rem;
     line-height: 1.7;
-    min-height: 0;
-    scrollbar-width: thin;
-    scrollbar-color: #1a2332 transparent;
-    scroll-behavior: smooth;
-    overscroll-behavior: contain;
 }
 
 .tk-body::-webkit-scrollbar {
@@ -386,6 +552,42 @@
 }
 
 /* ── Fact Entries ── */
+.tk-fact-thread {
+    margin: 8px 0;
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.018);
+    overflow: hidden;
+}
+
+.tk-fact-thread-summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 7px 10px;
+    color: var(--tk-text);
+    cursor: pointer;
+    font-size: 0.68rem;
+    letter-spacing: 0.2px;
+    user-select: none;
+    background: rgba(167, 139, 250, 0.06);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.tk-fact-thread-summary:hover {
+    background: rgba(167, 139, 250, 0.1);
+}
+
+.tk-fact-thread-meta {
+    color: var(--tk-dim);
+    font-size: 0.58rem;
+}
+
+.tk-fact-thread-body {
+    padding: 4px 8px 6px;
+}
+
 .tk-fact {
     padding: 6px 10px;
     margin: 4px 0;
@@ -531,6 +733,36 @@
     color: var(--tk-cyan);
 }
 
+.tk-fact-edit-popup {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    min-width: 420px;
+}
+
+.tk-fact-edit-field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.tk-fact-edit-label {
+    color: var(--tk-text);
+    font-size: 0.82rem;
+    font-weight: 600;
+}
+
+.tk-fact-edit-popup textarea {
+    min-height: 120px;
+    resize: vertical;
+}
+
+.tk-fact-edit-help {
+    color: var(--tk-dim);
+    font-size: 0.75rem;
+    line-height: 1.45;
+}
+
 .tk-cursor {
     display: inline-block;
     width: 7px;
@@ -598,16 +830,11 @@
     display: none;
     flex-direction: column;
     gap: 0;
-    overflow-y: auto;
-    overflow-x: hidden;
+    /* Grow with content — overlay handles the single scroll. */
+    overflow: visible;
     font-family: 'Raleway', -apple-system, BlinkMacSystemFont, sans-serif;
     font-size: 0.82rem;
-    flex: 1 1 auto;
-    min-height: 0;
-    scrollbar-width: thin;
-    scrollbar-color: #1a2332 transparent;
-    scroll-behavior: smooth;
-    overscroll-behavior: contain;
+    flex: 0 0 auto;
 }
 
 .tk-config-panel::-webkit-scrollbar {
@@ -1341,6 +1568,40 @@
         display: none;
     }
 
+    /* Category chips are hidden on mobile, but text search stays — give it
+       its own full-width row in the wrapping toolbar. */
+    .tk-fact-search-wrap {
+        flex: 1 1 100%;
+        margin-left: 0;
+    }
+
+    .tk-fact-search {
+        width: 100%;
+        box-sizing: border-box;
+    }
+
+    .tk-fact {
+        flex-wrap: wrap;
+        row-gap: 4px;
+    }
+
+    .tk-fact .fact-tag {
+        flex: 1 1 100%;
+        min-width: 0;
+    }
+
+    .tk-fact .fact-body {
+        flex: 1 1 100%;
+        min-width: 0;
+        line-height: 1.4;
+    }
+
+    .tk-fact .fact-actions-row {
+        flex: 1 1 100%;
+        justify-content: flex-start;
+        opacity: 1;
+    }
+
     .tk-stats {
         display: none;
     }
@@ -1354,4 +1615,138 @@
     .tk-mp-dropdown {
         min-width: 280px;
     }
+
+    .tk-archive-folders {
+        grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    }
+}
+
+/* ─────────────────────────────────────────────────────────────────────
+   ARCHIVE — Folder grid + manila folder cards
+   ───────────────────────────────────────────────────────────────────── */
+
+.tk-archive-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.tk-archive-title {
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.tk-archive-header-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.tk-archive-hint {
+    padding: 10px 16px;
+    font-size: 11px;
+    opacity: 0.7;
+    line-height: 1.5;
+}
+
+.tk-archive-folders {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    padding: 8px 16px 20px;
+}
+
+@media (min-width: 560px) {
+    .tk-archive-folders {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+}
+
+@media (min-width: 780px) {
+    .tk-archive-folders {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+}
+
+@media (min-width: 1000px) {
+    .tk-archive-folders {
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+    }
+}
+
+@media (min-width: 1200px) {
+    .tk-archive-folders {
+        grid-template-columns: repeat(6, minmax(0, 1fr));
+    }
+}
+
+.tk-archive-folder {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    padding: 14px 8px 12px;
+    background: rgba(74, 222, 128, 0.04);
+    border: 1px solid rgba(74, 222, 128, 0.12);
+    border-radius: 8px;
+    cursor: pointer;
+    font-family: inherit;
+    color: inherit;
+    transition: background 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
+    text-align: center;
+}
+
+.tk-archive-folder:hover {
+    background: rgba(74, 222, 128, 0.10);
+    border-color: rgba(74, 222, 128, 0.35);
+    transform: translateY(-1px);
+}
+
+.tk-archive-folder:active {
+    transform: translateY(0);
+}
+
+.tk-folder-icon {
+    width: 42px;
+    height: 42px;
+    max-width: 42px;
+    max-height: 42px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.35));
+}
+
+.tk-folder-icon svg,
+.tk-folder-icon .tk-folder-img {
+    width: 100%;
+    height: 100%;
+    max-width: 42px;
+    max-height: 42px;
+    object-fit: contain;
+    display: block;
+}
+
+.tk-folder-meta {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    align-items: center;
+}
+
+.tk-folder-range {
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--tk-fg, #e6edf3);
+    letter-spacing: 0.01em;
+}
+
+.tk-folder-count {
+    font-size: 0.68rem;
+    opacity: 0.65;
+    font-family: 'JetBrains Mono', 'Cascadia Code', monospace;
 }

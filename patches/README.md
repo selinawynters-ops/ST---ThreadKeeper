@@ -1,7 +1,7 @@
 Manual folder-delete cleanup for ThreadKeeper needs a small ST-side patch in addition to the extension files.
 
 This bundle is here:
-- [manual-delete-cleanup.patch](C:/Users/water/Desktop/DreamTavern.me/DreamyST/data/default-user/extensions/ST---ThreadKeeper/patches/manual-delete-cleanup.patch)
+- `./manual-delete-cleanup.patch`
 
 What it patches in another ST install:
 - `public/scripts/extensions.js`

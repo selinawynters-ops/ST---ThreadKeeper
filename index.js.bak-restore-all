@@ -160,16 +160,14 @@ RULES:
 - Be concise: each fact should be one clear sentence
 - Focus on facts that would be LOST if the model forgot earlier messages
 - Extract between ${minFacts} and ${maxFacts} facts per batch
-- Use "timeline" only for real day/time anchors, scene transitions, or major time skips. Timeline text must begin in this format: "Day N - at TIME [most significant thing that happened]". Example: "Day 14 - at 06:38 pm Savannah wakes". Use the current known day and time; if exact clock time is unknown, use the best available "at ..." time phrase such as "at dawn", "at midday", "at sunset", "at night", or "at unknown time". Message #1 = Day 1 unless that message explicitly states otherwise.
-- Do NOT create a timeline fact just to summarize every message. For user replies, extract important facts under the best non-timeline category (character, relationship, event, item, location, or plot) as long as source_index identifies the source message.
-- If one message is a clear montage or time skip that spans multiple distinct days, months, scenes, or clock times, you may extract multiple timeline facts for that same source_index, one per major time anchor, all using the same "Day N - at TIME ..." format.
+- Always extract a "timeline" fact as the FIRST fact for every message — this is mandatory for every message, not just day/time skips. Format: "Day N — [most significant thing that happened in this message]". Use the current known day; if unknown, infer from context or continue the last known day. Message #1 = Day 01 unless that message explicitly states otherwise.
 - Include: timeline anchors, character traits, relationships, important items, locations, plot developments, key events
 - Do NOT include: dialogue quotes, writing style notes, or obvious real-time actions
 - Do not duplicate facts that already exist in the provided existing facts list
 - If there are no new facts to extract, output exactly: []
 
 EXAMPLE OUTPUT:
-[{"category":"timeline","text":"Day 1 - at late morning Zuko and Petra meet for the first time","source_index":1},{"category":"character","text":"Luna has silver eyes and white hair","source_index":3},{"category":"location","text":"The story takes place in the city of Westmarch","source_index":7},{"category":"timeline","text":"Day 23 - at 06:38 pm Zuko and Petra start dating","source_index":201}]`;
+[{"category":"timeline","text":"Day 01 — Zuko and Petra meet for the first time","source_index":1},{"category":"character","text":"Luna has silver eyes and white hair","source_index":3},{"category":"location","text":"The story takes place in the city of Westmarch","source_index":7},{"category":"timeline","text":"Day 23 — Zuko and Petra have started dating","source_index":201}]`;
 }
 
 function getExtractionSystemPromptDogMeOut(minFacts = 1, maxFacts = 15) {
@@ -181,9 +179,7 @@ RULES:
 - Be concise and direct: one clear sentence per fact, no euphemisms
 - PROFANITY IS ALLOWED AND EXPECTED: Use it freely when it accurately captures character voice, attitude, kink, or dynamic. Don't censor, asterisk, soften, clinicalize, moralize, or replace explicit language with sanitized wording. Examples of what qualifies: fuck, shit, cock, pussy, ass, cunt, slut, whore, bastard, bitch, dick, cum, horny, filthy, depraved — use the actual word, not a stand-in. If a character is crude, aggressive, sexually explicit, humiliating, possessive, dominant, submissive, needy, or depraved, extract that plainly in those exact terms
 - Focus on facts that would be LOST if the model forgot earlier messages
-- Use "timeline" only for real day/time anchors, scene transitions, or major time skips. Timeline text must begin in this format: "Day N - at TIME [most significant thing that happened]". Example: "Day 14 - at 06:38 pm Savannah wakes". Use the current known day and time; if exact clock time is unknown, use the best available "at ..." time phrase such as "at dawn", "at midday", "at sunset", "at night", or "at unknown time". Message #1 = Day 1 unless that message explicitly states otherwise.
-- Do NOT create a timeline fact just to summarize every message. For user replies, extract important facts under the best non-timeline category (character, relationship, event, item, location, or plot) as long as source_index identifies the source message.
-- If one message is a clear montage or time skip that spans multiple distinct days, months, scenes, or clock times, you may extract multiple timeline facts for that same source_index, one per major time anchor, all using the same "Day N - at TIME ..." format.
+- Always extract a "timeline" fact as the FIRST fact for every message — this is mandatory for every message, not just day/time skips. Format: "Day N — [most significant thing that happened in this message]". Use the current known day; if unknown, infer from context or continue the last known day. Message #1 = Day 01 unless that message explicitly states otherwise.
 - Include: timeline anchors, physical traits (explicit if relevant), kinks/preferences, relationship dynamics, power dynamics, explicit acts that established a dynamic, important items, locations, plot
 - Do NOT include: dialogue quotes, writing style notes, or obvious real-time actions
 - Extract between ${minFacts} and ${maxFacts} facts per batch
@@ -191,7 +187,7 @@ RULES:
 - If there are no new facts to extract, output exactly: []
 
 EXAMPLE OUTPUT:
-[{"category":"timeline","text":"Day 1 - at midnight Marcus and Luna meet and fuck for the first time","source_index":1},{"category":"character","text":"Luna is a shameless fucking exhibitionist with a massive size kink","source_index":3},{"category":"relationship","text":"Marcus dominates and fucks Luna hard — she begs to be called his slut and means it","source_index":7},{"category":"timeline","text":"Day 7 - at 09:15 am Marcus moves in with Luna","source_index":89}]`;
+[{"category":"timeline","text":"Day 01 — Marcus and Luna meet and fuck for the first time","source_index":1},{"category":"character","text":"Luna is a shameless fucking exhibitionist with a massive size kink","source_index":3},{"category":"relationship","text":"Marcus dominates and fucks Luna hard — she begs to be called his slut and means it","source_index":7},{"category":"timeline","text":"Day 07 — Marcus moves in with Luna","source_index":89}]`;
 }
 
 function isDogMeOutTone(tone) {
@@ -201,8 +197,8 @@ function isDogMeOutTone(tone) {
 // `batchSize` (optional) is the number of messages in the batch this prompt
 // will accompany. When provided, the per-batch fact cap is scaled to be at
 // least 3 × batchSize so the model isn't pinned to a fixed 15-fact ceiling
-// for large batches, where each message can still yield multiple durable facts
-// and otherwise risk truncation / malformed JSON on 20+ msg batches.
+// for large batches (which conflicts with the "one timeline fact per message"
+// rule and causes truncation / malformed JSON on 20+ msg batches).
 function getExtractionSystemPrompt(batchSize = 0) {
     const settings = getSettings();
     const tone = settings.extractionTone || 'Polite';
@@ -249,7 +245,7 @@ function buildExtractionPrompt(messages, existingFacts) {
 - Do NOT sanitize, euphemize, censor, clinicalize, moralize, or replace explicit terms with softer wording
 - If source language is vulgar, sexual, humiliating, possessive, dominant, submissive, degrading, needy, or depraved, facts should reflect that directly and plainly
 - Do not add safety disclaimers or soften an explicit dynamic into neutral therapy language
-- When timeline facts are present, list them before explicit character/relationship/event facts from the same source message
+- Timeline facts still come first for each message before explicit character/relationship/event facts
 
 `;
     }
@@ -258,21 +254,6 @@ function buildExtractionPrompt(messages, existingFacts) {
         const sender = msg.is_user ? (msg.name || 'User') : (msg.name || 'Character');
         prompt += `[Message ${msg._tkIndex}] ${sender}: ${msg.mes}\n\n`;
     });
-
-    // Inject the latest timeline fact as an explicit "continue from here" anchor.
-    // Picked by source_index (the message it came from), so it is always the true
-    // chronological anchor — survives hidden messages and out-of-order extractions.
-    const timelineFacts = (existingFacts || [])
-        .filter(f => f.category === 'timeline' && Number.isFinite(getFactSourceIndex(f)));
-    const latestAnchor = timelineFacts.reduce(
-        (best, f) => (!best || getFactSourceIndex(f) > getFactSourceIndex(best) ? f : best),
-        null,
-    );
-    if (latestAnchor) {
-        prompt += '\n--- LATEST TIMELINE ANCHOR (continue from here) ---\n';
-        prompt += `"${latestAnchor.text}" (from message ${getFactSourceIndex(latestAnchor)})\n`;
-        prompt += 'When extracting timeline facts in this batch, continue from this anchor. Only increment the day number when the messages in this batch explicitly indicate time has passed. Never restart numbering at a lower day, even if earlier messages are now hidden.\n';
-    }
 
     if (existingFacts.length > 0) {
         prompt += '\n--- EXISTING FACTS (do not duplicate these) ---\n';
@@ -361,8 +342,6 @@ let showingArchive = false;
 // When non-null, the archive panel is showing one folder's contents.
 // Shape: { startIdx, endIdx, msgStart, msgEnd }
 let viewingFolderRange = null;
-// Current text query for the archive searchbar ('' = no filter active).
-let archiveSearchQuery = '';
 let activeFilter = 'all';
 let mobileStyleLink = null;
 let autoScanPopupHideTimer = null;
@@ -475,18 +454,6 @@ function sortExtractedFacts(facts) {
     });
 }
 
-function getFactSourceIndex(fact) {
-    return Number(fact?.sourceIndex ?? fact?.source_index ?? 0);
-}
-
-function normalizeTimelineFactText(text) {
-    return String(text || '').trim().replace(/^(Day\s+\d+)\s*[—–-]\s*/i, '$1 - ');
-}
-
-function getFactCategoryDisplay(category) {
-    return category;
-}
-
 function estimateTokens(text) {
     return Math.max(1, Math.ceil(String(text || '').length / 4));
 }
@@ -527,16 +494,7 @@ function buildTokenAwareBatches(messages, tokenBudget, maxMessages = BATCH_MAX_M
 }
 
 function getRecentFactsForDedup(facts, limit = 50) {
-    // Always carry pinned facts (user-curated) and every timeline fact (so the
-    // model sees prior "Day N" anchors even when newer extractions come from
-    // messages whose context lives in older or now-hidden messages). Then top up
-    // with the most recent facts so general dedup still works.
-    const recent = facts.slice(-limit);
-    const recentIds = new Set(recent.map(f => f.id));
-    const extras = facts.filter(f =>
-        (f.pinned || f.category === 'timeline') && !recentIds.has(f.id),
-    );
-    return [...extras, ...recent];
+    return facts.slice(-limit);
 }
 
 function getEffectiveExtractionModelKey(settings = getSettings()) {
@@ -647,13 +605,12 @@ function addFacts(newFacts) {
     const addedFacts = [];
 
     for (const fact of newFacts) {
-        const factText = fact.category === 'timeline' ? normalizeTimelineFactText(fact.text) : fact.text;
         // Dedup: skip if already in active facts
-        const isDupe = data.facts.some(f => f && f.text === factText);
+        const isDupe = data.facts.some(f => f && f.text === fact.text);
         if (isDupe) continue;
 
         // If this fact was previously archived, restore it instead of creating a duplicate.
-        const archivedIdx = data.archive.findIndex(f => f && f.text === factText);
+        const archivedIdx = data.archive.findIndex(f => f && f.text === fact.text);
         if (archivedIdx !== -1) {
             const restored = data.archive.splice(archivedIdx, 1)[0];
             delete restored.archivedAt;
@@ -664,7 +621,7 @@ function addFacts(newFacts) {
 
         const storedFact = {
             category: fact.category,
-            text: factText,
+            text: fact.text,
             sourceIndex: fact.source_index || 0,
             pinned: false,
             id: Date.now() + Math.random(),
@@ -727,23 +684,6 @@ function deleteFact(factId) {
         setTkData(data);
         syncPinnedToGlobal();
     }
-}
-
-function archiveActiveFact(factId) {
-    const data = getTkData();
-    if (!Array.isArray(data.archive)) data.archive = [];
-
-    const idx = data.facts.findIndex(f => f && f.id === factId);
-    if (idx === -1) return false;
-
-    const fact = data.facts.splice(idx, 1)[0];
-    if (!fact) return false;
-
-    fact.archivedAt = Date.now();
-    data.archive.push(fact);
-    setTkData(data);
-    syncPinnedToGlobal();
-    return true;
 }
 
 function parseFactEditInput(value, currentCategory) {
@@ -1037,20 +977,19 @@ function restorePinnedFromGlobal() {
     if (!globalPinned || globalPinned.length === 0) return;
 
     const data = getTkData();
-    // Only seed a chat that has no facts of its own (likely a brand-new chat).
-    // For chats that already have extracted facts/archive, leave them self-contained
-    // so pinned facts from another chat of the same character don't pollute them.
-    if ((data.facts?.length || 0) > 0 || (data.archive?.length || 0) > 0) {
-        return;
-    }
     for (const gf of globalPinned) {
-        data.facts.push({
-            category: gf.category,
-            text: gf.text,
-            sourceIndex: 0,
-            pinned: true,
-            id: Date.now() + Math.random(),
-        });
+        const existing = data.facts.find(f => f && f.text === gf.text);
+        if (existing) {
+            existing.pinned = true;
+        } else {
+            data.facts.push({
+                category: gf.category,
+                text: gf.text,
+                sourceIndex: 0,
+                pinned: true,
+                id: Date.now() + Math.random(),
+            });
+        }
     }
     setTkData(data);
 }
@@ -1660,10 +1599,6 @@ function buildTerminalHTML() {
                 <div class="tk-toolbar-sep"></div>
                 <button class="tk-cmd-btn secondary" id="tk-preview-btn">◉ preview</button>
                 <button class="tk-cmd-btn secondary" id="tk-settings-btn">⚙ settings</button>
-                <span class="tk-search-wrap tk-fact-search-wrap">
-                    <input type="text" class="tk-search-input tk-fact-search" id="tk-fact-search" placeholder="search facts…" autocomplete="off" />
-                    <button type="button" class="tk-search-clear" id="tk-fact-search-clear" title="Clear search" aria-label="Clear search">✕</button>
-                </span>
                 <div class="tk-filter-group" id="tk-filter-group">
                     <button class="tk-filter active" data-f="all">all</button>
                     <button class="tk-filter" data-f="character">chr</button>
@@ -2070,12 +2005,11 @@ function createFactElement(fact) {
     div.className = `tk-fact cat-${fact.category}`;
     div.dataset.factId = fact.id;
     div.innerHTML = `
-        <span class="fact-tag">${getFactCategoryDisplay(fact.category)}</span>
+        <span class="fact-tag">${fact.category}</span>
         <span class="fact-body">${escapeHtml(fact.text)}</span>
         <span class="fact-actions-row">
             <button class="tk-micro-btn edit-btn" data-action="edit" data-fact-id="${fact.id}" title="Edit fact">🪄</button>
             <button class="tk-micro-btn pin-btn ${fact.pinned ? 'pinned' : ''}" data-action="pin" data-fact-id="${fact.id}" title="Pin — pinned facts are always remembered">📌</button>
-            <button class="tk-micro-btn" data-action="archive" data-fact-id="${fact.id}" title="Archive this fact">📦</button>
             <button class="tk-micro-btn src-btn" data-action="source" data-source="${fact.sourceIndex}" title="Source message">↗${fact.sourceIndex}</button>
             <button class="tk-micro-btn del-btn" data-action="delete" data-fact-id="${fact.id}" title="Remove">✕</button>
         </span>`;
@@ -2184,8 +2118,6 @@ function toggleArchive() {
     // should start from the folder grid (or flat list if below threshold),
     // not from whichever folder was last open.
     viewingFolderRange = null;
-    // Clear any prior search so the archive opens unfiltered.
-    archiveSearchQuery = '';
     const body = document.getElementById('tk-body');
     const panel = document.getElementById('tk-archive');
     const toolbar = document.getElementById('tk-toolbar');
@@ -2214,30 +2146,13 @@ function renderArchivePanel() {
     const settings = getSettings();
     const folderSize = Math.max(50, Math.min(1000, Number(settings.archiveFolderSize) || 100));
 
-    // Active search query — when set, the archive ignores folder grouping and
-    // shows a flat list of every matching fact across the whole archive.
-    const query = archiveSearchQuery.trim().toLowerCase();
-    const searching = query.length > 0;
-
-    // Render modes (search overrides folder grouping entirely):
+    // Three render modes:
     //  - Empty archive: empty-state message
-    //  - Searching: flat list of matches across the whole archive
     //  - Archive < folderSize OR a folder is open: flat fact list
     //    (if a folder is open, sliced to just that folder's facts + "← folders")
     //  - Archive >= folderSize and no folder open: manila-folder grid
-    const inFolder = viewingFolderRange !== null && !searching;
-    const useFolderGrid = archived.length >= folderSize && !inFolder && !searching;
-
-    // Searchbar markup — shown whenever the archive has anything in it. The
-    // clear ✕ auto-shows via CSS (:not(:placeholder-shown)).
-    const searchBar = archived.length > 0 ? `
-        <div class="tk-archive-search-wrap">
-            <span class="tk-search-wrap">
-                <input type="text" class="tk-search-input tk-archive-search" id="tk-archive-search"
-                       placeholder="search all archived facts…" autocomplete="off" />
-                <button type="button" class="tk-search-clear" id="tk-archive-search-clear" title="Clear search" aria-label="Clear search">✕</button>
-            </span>
-        </div>` : '';
+    const inFolder = viewingFolderRange !== null;
+    const useFolderGrid = archived.length >= folderSize && !inFolder;
 
     const activeCount = getFacts().length;
     const restoreAllFits = archived.length > 0 && (activeCount + archived.length) <= settings.maxFacts;
@@ -2245,7 +2160,7 @@ function renderArchivePanel() {
         ? `Restore all ${archived.length} archived fact${archived.length === 1 ? '' : 's'} to active memory`
         : `Soft cap too low — active (${activeCount}) + archive (${archived.length}) would exceed max facts (${settings.maxFacts}). Raise "Max remembered facts" in Advanced settings.`;
     const restoreAllBtn = archived.length > 0
-        ? `<button class="tk-cmd-btn secondary" id="tk-archive-restore-all-btn" title="${escapeHtml(restoreAllTitle)}">↩ restore all</button>`
+        ? `<button class="tk-cmd-btn secondary" id="tk-archive-restore-all-btn"${restoreAllFits ? '' : ' disabled'} title="${escapeHtml(restoreAllTitle)}">↩ restore all</button>`
         : '';
 
     const headerActions = `
@@ -2276,7 +2191,6 @@ function renderArchivePanel() {
                 <div class="tk-archive-title">📦 Archive · ${archived.length} fact${archived.length === 1 ? '' : 's'} · ${folders.length} folder${folders.length === 1 ? '' : 's'}</div>
                 <div class="tk-archive-header-actions">${headerActions}</div>
             </div>
-            ${searchBar}
             <div class="tk-archive-hint">
                 Archive grouped into folders of ${folderSize} facts each. Click a folder to open it. Folder size can be changed in Advanced settings.
             </div>
@@ -2298,27 +2212,22 @@ function renderArchivePanel() {
             </div>
         `;
     } else {
-        // Flat list mode — archive is small, a folder is open, or searching.
-        const factsToShow = searching
-            ? archived.filter(f => f && (
-                (f.text || '').toLowerCase().includes(query) ||
-                (f.category || '').toLowerCase().includes(query)))
-            : inFolder
-                ? archived.slice(viewingFolderRange.startIdx, viewingFolderRange.endIdx)
-                : archived;
-        const archiveTitle = searching
-            ? `📦 Archive · ${factsToShow.length} match${factsToShow.length === 1 ? '' : 'es'}`
-            : `📦 Archive · ${factsToShow.length} fact${factsToShow.length === 1 ? '' : 's'}${inFolder ? ` · Msgs ${viewingFolderRange.msgStart}–${viewingFolderRange.msgEnd}` : ''}`;
+        // Flat list mode — either archive is small, or a folder is open.
+        const factsToShow = inFolder
+            ? archived.slice(viewingFolderRange.startIdx, viewingFolderRange.endIdx)
+            : archived;
+        const titleSuffix = inFolder
+            ? ` · Msgs ${viewingFolderRange.msgStart}–${viewingFolderRange.msgEnd}`
+            : '';
         const foldersBackBtn = inFolder
             ? '<button class="tk-cmd-btn secondary" id="tk-archive-folders-back">← folders</button>'
             : '';
 
         html = `
             <div class="tk-archive-header">
-                <div class="tk-archive-title">${archiveTitle}</div>
+                <div class="tk-archive-title">📦 Archive · ${factsToShow.length} fact${factsToShow.length === 1 ? '' : 's'}${titleSuffix}</div>
                 <div class="tk-archive-header-actions">${foldersBackBtn}${headerActions}</div>
             </div>
-            ${searchBar}
             <div class="tk-archive-hint">
                 Archived facts are not sent to the LLM. Restore them to bring them back into active memory.
                 If active memory is at the cap, restoring auto-archives the oldest active fact to make room.
@@ -2327,15 +2236,13 @@ function renderArchivePanel() {
         `;
 
         if (factsToShow.length === 0) {
-            html += searching
-                ? `<div style="opacity:0.5;text-align:center;padding:24px;">No archived facts match &quot;${escapeHtml(archiveSearchQuery)}&quot;.</div>`
-                : '<div style="opacity:0.5;text-align:center;padding:24px;">Archive is empty.</div>';
+            html += '<div style="opacity:0.5;text-align:center;padding:24px;">Archive is empty.</div>';
         } else {
             for (const fact of factsToShow) {
                 const dateStr = fact.archivedAt ? new Date(fact.archivedAt).toLocaleString() : '';
                 html += `
                     <div class="tk-fact cat-${fact.category}" data-fact-id="${fact.id}" style="margin-bottom:6px;">
-                        <span class="fact-tag">${getFactCategoryDisplay(fact.category)}</span>
+                        <span class="fact-tag">${fact.category}</span>
                         <span class="fact-body">${escapeHtml(fact.text)}</span>
                         <span class="fact-actions-row">
                             <span style="font-size:10px;opacity:0.5;margin-right:6px;">${dateStr}</span>
@@ -2354,31 +2261,6 @@ function renderArchivePanel() {
     panel.innerHTML = html;
     panel.style.display = 'flex';
     panel.style.flexDirection = 'column';
-
-    // Archive searchbar — the panel does whole-innerHTML swaps, so each
-    // keystroke re-renders and we re-apply focus + caret to feel continuous.
-    const archiveSearch = document.getElementById('tk-archive-search');
-    if (archiveSearch) {
-        // Set value as a property (not an HTML attribute) so a query containing
-        // a quote can't break out of the markup. :placeholder-shown still
-        // reflects this live value, so the clear ✕ shows/hides correctly.
-        archiveSearch.value = archiveSearchQuery;
-        archiveSearch.addEventListener('input', () => {
-            const caret = archiveSearch.selectionStart;
-            archiveSearchQuery = archiveSearch.value;
-            renderArchivePanel();
-            const next = document.getElementById('tk-archive-search');
-            if (next) {
-                next.focus();
-                try { next.setSelectionRange(caret, caret); } catch { /* ignore */ }
-            }
-        });
-    }
-    document.getElementById('tk-archive-search-clear')?.addEventListener('click', () => {
-        archiveSearchQuery = '';
-        renderArchivePanel();
-        document.getElementById('tk-archive-search')?.focus();
-    });
 
     document.getElementById('tk-archive-back-btn')?.addEventListener('click', toggleArchive);
     document.getElementById('tk-archive-clear-btn')?.addEventListener('click', () => {
@@ -3780,21 +3662,6 @@ function attachEventListeners() {
         });
     }
 
-    // Fact search box — live text filter over the active facts list.
-    const factSearch = document.getElementById('tk-fact-search');
-    if (factSearch) {
-        factSearch.addEventListener('input', applyFilter);
-    }
-    const factSearchClear = document.getElementById('tk-fact-search-clear');
-    if (factSearchClear) {
-        factSearchClear.addEventListener('click', () => {
-            if (!factSearch) return;
-            factSearch.value = '';
-            applyFilter();
-            factSearch.focus();
-        });
-    }
-
     // Fact action buttons (delegated)
     const body = document.getElementById('tk-body');
     if (body) {
@@ -3830,21 +3697,6 @@ function attachEventListeners() {
                 }
                 updateStats();
                 injectFacts();
-            } else if (action === 'archive') {
-                if (archiveActiveFact(factId)) {
-                    const factEl = btn.closest('.tk-fact');
-                    if (factEl) {
-                        factEl.style.transition = 'all 0.2s ease';
-                        factEl.style.opacity = '0';
-                        factEl.style.height = '0';
-                        factEl.style.overflow = 'hidden';
-                        factEl.style.margin = '0';
-                        factEl.style.padding = '0';
-                        setTimeout(() => factEl.remove(), 200);
-                    }
-                    updateStats();
-                    await injectFacts();
-                }
             } else if (action === 'source') {
                 const sourceIdx = parseInt(btn.dataset.source);
                 if (sourceIdx > 0) {
@@ -3892,18 +3744,12 @@ function handleGlobalClick(e) {
 }
 
 function applyFilter() {
-    // Scoped to #tk-body so it never touches archive cards (which also use
-    // .tk-fact / .fact-body) — the archive has its own independent searchbar.
-    const q = (document.getElementById('tk-fact-search')?.value || '').trim().toLowerCase();
-    document.querySelectorAll('#tk-body .tk-fact').forEach(card => {
+    document.querySelectorAll('.tk-fact').forEach(card => {
         const category = [...card.classList].find(c => c.startsWith('cat-'))?.replace('cat-', '');
         if (!category) return;
-        const catMatch = activeFilter === 'all' || category === activeFilter;
-        const text = (card.querySelector('.fact-body')?.textContent || '').toLowerCase();
-        const searchMatch = !q || text.includes(q) || category.includes(q);
-        card.style.display = (catMatch && searchMatch) ? 'flex' : 'none';
+        card.style.display = (activeFilter === 'all' || category === activeFilter) ? 'flex' : 'none';
     });
-    document.querySelectorAll('#tk-body .tk-fact-thread').forEach(thread => {
+    document.querySelectorAll('.tk-fact-thread').forEach(thread => {
         const visibleFacts = Array.from(thread.querySelectorAll('.tk-fact')).some(card => card.style.display !== 'none');
         thread.style.display = visibleFacts ? '' : 'none';
     });
@@ -3990,7 +3836,6 @@ async function onChatChanged() {
     // Reset folder-view state — a folder open against the previous chat's
     // archive would render stale indexes against this chat's archive.
     viewingFolderRange = null;
-    archiveSearchQuery = '';
     restorePinnedFromGlobal();
     await injectFacts();
     if (isTerminalOpen) refreshTerminalContent();
