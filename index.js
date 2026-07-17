@@ -4605,15 +4605,19 @@ function registerSlashCommands() {
     }
 }
 
+export async function onExtensionDelete() {
+    await wipeThreadKeeperData();
+}
+
 // ═══════════════════════════════════════════════════════════════════
 // CLEANUP / UNLOAD
 // ═══════════════════════════════════════════════════════════════════
 
 function cleanup() {
-    eventSource.off(event_types.CHAT_CHANGED, onChatChanged);
-    eventSource.off(event_types.CHARACTER_MESSAGE_RENDERED, onNewMessage);
-    eventSource.off(event_types.USER_MESSAGE_RENDERED, onNewMessage);
-    eventSource.off(event_types.CHAT_COMPLETION_PROMPT_READY, onChatCompletionPromptReady);
+    removeEventSourceListener(event_types.CHAT_CHANGED, onChatChanged);
+    removeEventSourceListener(event_types.CHARACTER_MESSAGE_RENDERED, onNewMessage);
+    removeEventSourceListener(event_types.USER_MESSAGE_RENDERED, onNewMessage);
+    removeEventSourceListener(event_types.CHAT_COMPLETION_PROMPT_READY, onChatCompletionPromptReady);
     document.removeEventListener('click', handleGlobalClick);
     mobileStyleLink?.remove();
     mobileStyleLink = null;
@@ -4625,6 +4629,17 @@ function cleanup() {
     document.getElementById('threadkeeper-overlay')?.remove();
     document.querySelectorAll('#threadkeeper-menu-item').forEach(el => el.remove());
     setExtensionPrompt(EXTENSION_PROMPT_KEY, '', extension_prompt_types.IN_CHAT, 0);
+}
+
+function removeEventSourceListener(eventName, handler) {
+    if (typeof eventSource.removeListener === 'function') {
+        eventSource.removeListener(eventName, handler);
+        return;
+    }
+
+    if (typeof eventSource.off === 'function') {
+        eventSource.off(eventName, handler);
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════
