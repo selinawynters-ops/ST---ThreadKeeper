@@ -31,7 +31,7 @@ import { SlashCommandParser } from '../../../slash-commands/SlashCommandParser.j
 import { SlashCommand } from '../../../slash-commands/SlashCommand.js';
 import { CONNECT_API_MAP } from '../../../slash-commands.js';
 import { SECRET_KEYS, findSecret } from '../../../secrets.js';
-import { oai_settings } from '../../../openai.js';
+import { oai_settings, proxies } from '../../../openai.js';
 import { installUninstallHook, wipeThreadKeeperData } from './uninstall.js';
 
 // ═══════════════════════════════════════════════════════════════════
@@ -1686,17 +1686,48 @@ async function runExtraction(fullRescan = false, logFn = null, progressFn = null
                                 { role: 'user', content: prompt },
                             ];
                             const requestModel = settings.model || selectedProfile.model || undefined;
-                            const requestResult = await ConnectionManagerRequestService.sendRequest(
-                                selectedProfile.id,
-                                requestPrompt,
-                                responseBudget,
-                                { includePreset: false, includeInstruct: false },
-                                {
-                                    ...(requestModel ? { model: requestModel } : {}),
-                                    temperature: settings.temperature,
-                                },
-                            );
-                            response = requestResult?.content ?? requestResult?.text ?? requestResult;
+                            const requestOverrides = {
+                                ...(requestModel ? { model: requestModel } : {}),
+                                temperature: settings.temperature,
+                            };
+                            if (selectedSource === 'custom') {
+                                requestOverrides.custom_include_headers = oai_settings.custom_include_headers;
+                                requestOverrides.custom_include_body = oai_settings.custom_include_body;
+                                requestOverrides.custom_exclude_body = oai_settings.custom_exclude_body;
+                            }
+
+                            const shouldAlignRequestSource = Boolean(selectedSource);
+                            let savedRequestSource;
+                            let savedRequestModel;
+
+                            if (shouldAlignRequestSource) {
+                                savedRequestSource = oai_settings.chat_completion_source;
+                                oai_settings.chat_completion_source = selectedSource;
+                            }
+                            if (selectedModelField) {
+                                savedRequestModel = oai_settings[selectedModelField];
+                                if (requestModel) {
+                                    oai_settings[selectedModelField] = requestModel;
+                                }
+                            }
+
+                            try {
+                                const requestResult = await ConnectionManagerRequestService.sendRequest(
+                                    selectedProfile.id,
+                                    requestPrompt,
+                                    responseBudget,
+                                    { includePreset: false, includeInstruct: false },
+                                    requestOverrides,
+                                );
+                                response = requestResult?.content ?? requestResult?.text ?? requestResult;
+                            } finally {
+                                if (shouldAlignRequestSource) {
+                                    oai_settings.chat_completion_source = savedRequestSource;
+                                }
+                                if (selectedModelField) {
+                                    oai_settings[selectedModelField] = savedRequestModel;
+                                }
+                            }
                         } else {
                             // Fallback path for unsupported profile types.
                             // This preserves the current behavior for providers outside the
@@ -3752,6 +3783,65 @@ function getModelsEndpointForProfile(profile) {
     return endpointMap[api] || '';
 }
 
+function getProfileProxyPreset(profile) {
+    const proxyName = String(profile?.proxy || '').trim();
+    if (!proxyName) {
+        return null;
+    }
+
+    return proxies.find(proxy => proxy.name === proxyName) || null;
+}
+
+function applyProfileApiUrlFields(target, profile, chatCompletionSource = '') {
+    const source = String(chatCompletionSource || '').toLowerCase();
+    const apiUrl = String(profile?.['api-url'] || '').trim();
+    if (!apiUrl) {
+        return target;
+    }
+
+    if (source === 'custom') {
+        target.custom_url = apiUrl;
+    } else if (source === 'vertexai') {
+        target.vertexai_region = apiUrl;
+    } else if (source === 'zai') {
+        target.zai_endpoint = apiUrl;
+    } else if (source === 'siliconflow') {
+        target.siliconflow_endpoint = apiUrl;
+    } else if (source === 'minimax') {
+        target.minimax_endpoint = apiUrl;
+    }
+
+    return target;
+}
+
+function buildStatusRequestBodyForProfile(profile) {
+    const apiConfig = CONNECT_API_MAP[String(profile?.api || '').toLowerCase()];
+    const chatCompletionSource = String(apiConfig?.source || profile?.api || '').toLowerCase();
+    const body = {
+        chat_completion_source: chatCompletionSource,
+    };
+
+    if (profile?.['secret-id']) {
+        body.secret_id = profile['secret-id'];
+    }
+
+    applyProfileApiUrlFields(body, profile, chatCompletionSource);
+
+    const proxyPreset = getProfileProxyPreset(profile);
+    if (proxyPreset?.url) {
+        body.reverse_proxy = proxyPreset.url;
+    }
+    if (proxyPreset?.password) {
+        body.proxy_password = proxyPreset.password;
+    }
+
+    if (chatCompletionSource === 'custom') {
+        body.custom_include_headers = oai_settings.custom_include_headers;
+    }
+
+    return body;
+}
+
 function normalizeFetchedModels(profile, payload) {
     const api = String(profile?.api || '').toLowerCase();
     const provider = profile?.name || profile?.api || '';
@@ -3802,12 +3892,48 @@ function normalizeFetchedModels(profile, payload) {
 }
 
 async function fetchModelsForProfile(profile) {
-    const cacheKey = `${profile.id}:${profile['secret-id'] || ''}:${profile.model || ''}`;
+    const cacheKey = [
+        profile.id,
+        profile.api || '',
+        profile['secret-id'] || '',
+        profile.model || '',
+        profile['api-url'] || '',
+        profile.proxy || '',
+    ].join(':');
     if (modelCatalogCache.has(cacheKey)) {
         return modelCatalogCache.get(cacheKey);
     }
 
-    // Try direct fetch first so the selected profile's own URL and secret are used.
+    // Prefer ST's server-side status route so secrets, proxy presets, and
+    // custom-compatible providers behave the same way as native model loading.
+    try {
+        const response = await fetch('/api/backends/chat-completions/status', {
+            method: 'POST',
+            headers: getRequestHeaders(),
+            body: JSON.stringify(buildStatusRequestBodyForProfile(profile)),
+            signal: AbortSignal.timeout(10000),
+        });
+
+        if (response.ok) {
+            const responseData = await response.json();
+            const provider = profile.name || profile.api || '';
+
+            if (responseData.data && Array.isArray(responseData.data)) {
+                const models = responseData.data.map(m => ({
+                    id: String(m.id || m.name || ''),
+                    name: String(m.name || m.id || ''),
+                    provider,
+                })).filter(m => m.id);
+                if (models.length > 0) {
+                    modelCatalogCache.set(cacheKey, models);
+                }
+                return models;
+            }
+        }
+    } catch (error) {
+    }
+
+    // Last resort for providers whose /status route is unavailable.
     const endpoint = getModelsEndpointForProfile(profile);
     if (endpoint) {
         try {
@@ -3825,7 +3951,6 @@ async function fetchModelsForProfile(profile) {
             if (secretValue && api !== 'makersuite') {
                 headers.Authorization = `Bearer ${secretValue}`;
             }
-
             const response = await fetch(resolvedEndpoint, {
                 method: 'GET',
                 headers,
@@ -3842,52 +3967,6 @@ async function fetchModelsForProfile(profile) {
             }
         } catch (e) {
         }
-    }
-
-    // Fallback: only use the currently active ST profile state, which is safe
-    // for the live profile but not for profile switching.
-    try {
-        const currentProfileId = getCurrentConnectionProfileId();
-        if (profile.id === currentProfileId) {
-            const apiConfig = CONNECT_API_MAP[String(profile.api || '').toLowerCase()];
-            const chatCompletionSource = apiConfig?.source || profile.api;
-
-            const body = {
-                chat_completion_source: chatCompletionSource,
-            };
-            if (profile['api-url']) {
-                body.custom_url = profile['api-url'];
-            }
-            if (oai_settings?.reverse_proxy) {
-                body.reverse_proxy = oai_settings.reverse_proxy;
-                body.proxy_password = oai_settings.proxy_password;
-            }
-
-            const response = await fetch('/api/backends/chat-completions/status', {
-                method: 'POST',
-                headers: getRequestHeaders(),
-                body: JSON.stringify(body),
-                signal: AbortSignal.timeout(10000),
-            });
-
-            if (response.ok) {
-                const responseData = await response.json();
-                const provider = profile.name || profile.api || '';
-
-                if (responseData.data && Array.isArray(responseData.data)) {
-                    const models = responseData.data.map(m => ({
-                        id: String(m.id || m.name || ''),
-                        name: String(m.name || m.id || ''),
-                        provider,
-                    })).filter(m => m.id);
-                    if (models.length > 0) {
-                        modelCatalogCache.set(cacheKey, models);
-                    }
-                    return models;
-                }
-            }
-        }
-    } catch (error) {
     }
 
     return [];
@@ -3913,7 +3992,7 @@ async function getAvailableModels(profileId = getSettings().connectionProfile) {
             }
         }
 
-        // Strategy 2: Fetch directly against the selected profile.
+        // Strategy 2: Ask ST for the selected profile's model catalog.
         const fetchedModels = await fetchModelsForProfile(profile);
         if (fetchedModels.length > 0) {
             if (profile.model && !fetchedModels.some(model => model.id === profile.model)) {
