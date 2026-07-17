@@ -627,9 +627,30 @@ function getRecentFactsForDedup(facts, limit = 50) {
 function getEffectiveExtractionModelKey(settings = getSettings()) {
     const profileId = settings.connectionProfile || '__current__';
     const profile = profileId !== '__current__' ? getSelectedConnectionProfile(profileId) : null;
-    const model = String(settings.model || profile?.model || getCurrentModelFromDom?.() || '').trim();
+    const model = String(getPreferredModelForProfile(profileId, settings) || '').trim();
     const api = String(profile?.api || 'current').trim();
     return `${profileId}|${api}|${model}`;
+}
+
+function getPreferredModelForProfile(profileId = getSettings().connectionProfile, settings = getSettings()) {
+    const normalizedProfileId = profileId || '__current__';
+    const profile = normalizedProfileId !== '__current__' ? getSelectedConnectionProfile(normalizedProfileId) : null;
+    const pickerModel = String(document.getElementById('tk-mp-selected')?.dataset?.modelId || '').trim();
+
+    if (normalizedProfileId === (settings.connectionProfile || '__current__')) {
+        if (pickerModel && pickerModel !== 'Use default model') {
+            return pickerModel;
+        }
+        if (settings.model) {
+            return String(settings.model).trim();
+        }
+    }
+
+    if (profile?.model) {
+        return String(profile.model).trim();
+    }
+
+    return String(getCurrentModelFromDom?.() || '').trim();
 }
 
 function countNonHiddenMessagesInRange(startIndex, endIndex) {
@@ -1685,7 +1706,7 @@ async function runExtraction(fullRescan = false, logFn = null, progressFn = null
                                 { role: 'system', content: getExtractionSystemPrompt(batch.length) },
                                 { role: 'user', content: prompt },
                             ];
-                            const requestModel = settings.model || selectedProfile.model || undefined;
+                            const requestModel = getPreferredModelForProfile(settings.connectionProfile, settings) || undefined;
                             const requestOverrides = {
                                 ...(requestModel ? { model: requestModel } : {}),
                                 temperature: settings.temperature,
@@ -3500,7 +3521,9 @@ function setupModelPicker() {
 
     if (connectionSelect) {
         connectionSelect.addEventListener('change', () => {
-            updateSelectedModelLabel(getDefaultModelForSelection(connectionSelect.value));
+            const nextModel = getDefaultModelForSelection(connectionSelect.value);
+            updateSelectedModelLabel(nextModel);
+            saveSetting('model', nextModel || '');
             if (search) {
                 search.value = '';
             }
