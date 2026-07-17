@@ -3845,13 +3845,18 @@ function buildStatusRequestBodyForProfile(profile) {
 function normalizeFetchedModels(profile, payload) {
     const api = String(profile?.api || '').toLowerCase();
     const provider = profile?.name || profile?.api || '';
-    const sourceList = Array.isArray(payload?.data)
+    const rootPayload = payload?.data && typeof payload.data === 'object' && !Array.isArray(payload.data)
         ? payload.data
-        : Array.isArray(payload?.models)
-            ? payload.models
-            : Array.isArray(payload)
-                ? payload
-                : [];
+        : payload;
+    const sourceList = Array.isArray(rootPayload?.data)
+        ? rootPayload.data
+        : Array.isArray(rootPayload?.models)
+            ? rootPayload.models
+            : Array.isArray(rootPayload?.result)
+                ? rootPayload.result
+                : Array.isArray(rootPayload)
+                    ? rootPayload
+                    : [];
 
     let models = sourceList.map(model => {
         const id = model?.id || model?.name || model?.model || model?.slug;
@@ -3916,17 +3921,9 @@ async function fetchModelsForProfile(profile) {
 
         if (response.ok) {
             const responseData = await response.json();
-            const provider = profile.name || profile.api || '';
-
-            if (responseData.data && Array.isArray(responseData.data)) {
-                const models = responseData.data.map(m => ({
-                    id: String(m.id || m.name || ''),
-                    name: String(m.name || m.id || ''),
-                    provider,
-                })).filter(m => m.id);
-                if (models.length > 0) {
-                    modelCatalogCache.set(cacheKey, models);
-                }
+            const models = normalizeFetchedModels(profile, responseData);
+            if (models.length > 0) {
+                modelCatalogCache.set(cacheKey, models);
                 return models;
             }
         }
@@ -3977,6 +3974,10 @@ async function getAvailableModels(profileId = getSettings().connectionProfile) {
 
     if (profile) {
         const currentProfileId = getCurrentConnectionProfileId();
+        const fallbackModelId = getDefaultModelForSelection(profile.id);
+        const fallbackModel = fallbackModelId
+            ? { id: fallbackModelId, name: fallbackModelId, provider: profile.name || profile.api || '' }
+            : null;
 
         // Strategy 1: Read from the DOM model <select> only when this is the active profile.
         if (profile.id === currentProfileId) {
@@ -3984,8 +3985,8 @@ async function getAvailableModels(profileId = getSettings().connectionProfile) {
             if (profileControl) {
                 const profileModels = readModelsFromControl(profileControl, profile);
                 if (profileModels.length > 0) {
-                    if (profile.model && !profileModels.some(model => model.id === profile.model)) {
-                        profileModels.unshift({ id: profile.model, name: profile.model, provider: profile.name || profile.api || '' });
+                    if (fallbackModel && !profileModels.some(model => model.id === fallbackModel.id)) {
+                        profileModels.unshift(fallbackModel);
                     }
                     return profileModels;
                 }
@@ -3995,15 +3996,15 @@ async function getAvailableModels(profileId = getSettings().connectionProfile) {
         // Strategy 2: Ask ST for the selected profile's model catalog.
         const fetchedModels = await fetchModelsForProfile(profile);
         if (fetchedModels.length > 0) {
-            if (profile.model && !fetchedModels.some(model => model.id === profile.model)) {
-                fetchedModels.unshift({ id: profile.model, name: profile.model, provider: profile.name || profile.api || '' });
+            if (fallbackModel && !fetchedModels.some(model => model.id === fallbackModel.id)) {
+                fetchedModels.unshift(fallbackModel);
             }
             return fetchedModels;
         }
 
-        // Strategy 3: Use profile's saved model
-        if (profile.model) {
-            return [{ id: profile.model, name: profile.model, provider: profile.name || profile.api || '' }];
+        // Strategy 3: Use the saved/current model even if model discovery fails.
+        if (fallbackModel) {
+            return [fallbackModel];
         }
         return [];
     }
