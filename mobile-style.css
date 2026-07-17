@@ -163,7 +163,7 @@
         width: calc(100dvw - 48px) !important;
         max-width: calc(100dvw - 48px) !important;
         min-width: 0 !important;
-        max-height: 220px !important;
+        max-height: 320px !important;
         border-radius: 12px !important;
     }
 
@@ -172,7 +172,7 @@
     }
 
     .tk-mp-list {
-        max-height: 220px !important;
+        max-height: 280px !important;
         -webkit-overflow-scrolling: touch;
     }
 

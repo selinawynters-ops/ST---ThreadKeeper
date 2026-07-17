@@ -3501,7 +3501,10 @@ function setupModelPicker() {
     if (connectionSelect) {
         connectionSelect.addEventListener('change', () => {
             updateSelectedModelLabel(getDefaultModelForSelection(connectionSelect.value));
-            void refreshModels(search?.value || '');
+            if (search) {
+                search.value = '';
+            }
+            void refreshModels('');
         });
     }
 
