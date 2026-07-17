@@ -1707,11 +1707,12 @@ async function runExtraction(fullRescan = false, logFn = null, progressFn = null
                                 { role: 'user', content: prompt },
                             ];
                             const requestModel = getPreferredModelForProfile(settings.connectionProfile, settings) || undefined;
+                            const includeProfilePreset = Boolean(selectedSource === 'custom' && selectedProfile?.preset);
                             const requestOverrides = {
                                 ...(requestModel ? { model: requestModel } : {}),
                                 temperature: settings.temperature,
                             };
-                            if (selectedSource === 'custom') {
+                            if (selectedSource === 'custom' && !includeProfilePreset) {
                                 requestOverrides.custom_include_headers = oai_settings.custom_include_headers;
                                 requestOverrides.custom_include_body = oai_settings.custom_include_body;
                                 requestOverrides.custom_exclude_body = oai_settings.custom_exclude_body;
@@ -1737,7 +1738,7 @@ async function runExtraction(fullRescan = false, logFn = null, progressFn = null
                                     selectedProfile.id,
                                     requestPrompt,
                                     responseBudget,
-                                    { includePreset: false, includeInstruct: false },
+                                    { includePreset: includeProfilePreset, includeInstruct: false },
                                     requestOverrides,
                                 );
                                 response = requestResult?.content ?? requestResult?.text ?? requestResult;
