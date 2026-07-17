@@ -1389,7 +1389,7 @@
     z-index: 10050;
     display: none;
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
-    max-height: 440px;
+    max-height: 320px;
     flex-direction: column;
     overflow: hidden;
 }
@@ -1431,7 +1431,7 @@
     overflow-y: auto;
     overflow-x: hidden;
     flex: 1;
-    max-height: 380px;
+    max-height: 260px;
     scrollbar-width: thin;
     scrollbar-color: #1a2332 transparent;
     scroll-behavior: smooth;

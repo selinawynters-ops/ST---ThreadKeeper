@@ -3683,6 +3683,27 @@ function readModelsFromControl(control, profile = null) {
         return models;
     }
 
+    if (control.tagName === 'INPUT' && control.list) {
+        const models = [];
+        const seen = new Set();
+        const currentValue = String(control.value || '').trim();
+
+        if (currentValue) {
+            seen.add(currentValue);
+            models.push({ id: currentValue, name: currentValue, provider: providerLabel });
+        }
+
+        Array.from(control.list.options || []).forEach(opt => {
+            const value = String(opt.value || '').trim();
+            const name = String(opt.textContent || opt.label || value).trim();
+            if (!value || seen.has(value)) return;
+            seen.add(value);
+            models.push({ id: value, name: name || value, provider: providerLabel });
+        });
+
+        return models;
+    }
+
     const value = String(control.value || '').trim();
     return value ? [{ id: value, name: value, provider: providerLabel }] : [];
 }
