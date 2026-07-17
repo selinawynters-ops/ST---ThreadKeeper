@@ -17,6 +17,7 @@ import {
     extension_prompt_roles,
     MAX_INJECTION_DEPTH,
     generateRaw,
+    main_api,
     setExtensionPrompt,
     saveSettingsDebounced,
     saveSettings,
@@ -625,11 +626,46 @@ function getRecentFactsForDedup(facts, limit = 50) {
 }
 
 function getEffectiveExtractionModelKey(settings = getSettings()) {
+    const target = getExtractionTarget(settings);
+    const model = String(getPreferredModelForProfile(target.profileId, settings) || '').trim();
+    const api = String(target.profile?.api || target.backend || 'current').trim();
+    const source = String(target.source || 'default').trim();
+    return `${target.profileId}|${api}|${source}|${model}`;
+}
+
+function getExtractionTarget(settings = getSettings()) {
     const profileId = settings.connectionProfile || '__current__';
     const profile = profileId !== '__current__' ? getSelectedConnectionProfile(profileId) : null;
-    const model = String(getPreferredModelForProfile(profileId, settings) || '').trim();
-    const api = String(profile?.api || 'current').trim();
-    return `${profileId}|${api}|${model}`;
+
+    if (profile) {
+        const apiConfig = profile.api ? CONNECT_API_MAP[String(profile.api).toLowerCase()] : null;
+        const backend = apiConfig?.selected || null;
+        const source = apiConfig?.source || null;
+        const modelField = source ? TK_SOURCE_MODEL_FIELD[source] || null : null;
+        return {
+            profileId,
+            profile,
+            backend,
+            source,
+            modelField,
+            supportsProfileRequest: Boolean(backend && ['openai', 'textgenerationwebui'].includes(backend)),
+        };
+    }
+
+    const backend = String(main_api || '').trim() || null;
+    const source = backend === 'openai'
+        ? String(oai_settings.chat_completion_source || '').trim() || null
+        : null;
+    const modelField = source ? TK_SOURCE_MODEL_FIELD[source] || null : null;
+
+    return {
+        profileId,
+        profile: null,
+        backend,
+        source,
+        modelField,
+        supportsProfileRequest: false,
+    };
 }
 
 function getPreferredModelForProfile(profileId = getSettings().connectionProfile, settings = getSettings()) {
@@ -1573,18 +1609,12 @@ async function runExtraction(fullRescan = false, logFn = null, progressFn = null
             log(`<span class="tk-info">Empty-response pause cleared — hidden-message range changed while scan hidden is disabled.</span>`);
         }
 
-        const selectedProfile = settings.connectionProfile && settings.connectionProfile !== '__current__'
-            ? getSelectedConnectionProfile(settings.connectionProfile)
-            : null;
-        const selectedApiConfig = selectedProfile?.api ? CONNECT_API_MAP[String(selectedProfile.api).toLowerCase()] : null;
-        const selectedBackend = selectedApiConfig?.selected || null;
-        const selectedSource = selectedApiConfig?.source || null;
-        const selectedModelField = selectedSource ? TK_SOURCE_MODEL_FIELD[selectedSource] || null : null;
-        const supportsProfileRequest = Boolean(
-            selectedProfile &&
-            selectedBackend &&
-            ['openai', 'textgenerationwebui'].includes(selectedBackend),
-        );
+        const extractionTarget = getExtractionTarget(settings);
+        const selectedProfile = extractionTarget.profile;
+        const selectedBackend = extractionTarget.backend;
+        const selectedSource = extractionTarget.source;
+        const selectedModelField = extractionTarget.modelField;
+        const supportsProfileRequest = extractionTarget.supportsProfileRequest;
 
         if (fullRescan) {
             log(`<span class="tk-prompt">$</span> <span class="tk-cmd">re-extract --full</span>`);
@@ -1754,7 +1784,8 @@ async function runExtraction(fullRescan = false, logFn = null, progressFn = null
                             // Fallback path for unsupported profile types.
                             // This preserves the current behavior for providers outside the
                             // connection-manager request service.
-                            const shouldOverrideModel = settings.model &&
+                            const requestModel = getPreferredModelForProfile(settings.connectionProfile, settings) || undefined;
+                            const shouldOverrideModel = Boolean(requestModel) &&
                                 selectedBackend === 'openai' &&
                                 selectedSource &&
                                 selectedModelField;
@@ -1763,11 +1794,11 @@ async function runExtraction(fullRescan = false, logFn = null, progressFn = null
                                 savedSource = oai_settings.chat_completion_source;
                                 savedModel = oai_settings[selectedModelField];
                                 oai_settings.chat_completion_source = selectedSource;
-                                oai_settings[selectedModelField] = settings.model;
+                                oai_settings[selectedModelField] = requestModel;
                             }
                             if (settings.temperature !== undefined) {
-                                savedTemp = oai_settings.temperature;
-                                oai_settings.temperature = settings.temperature;
+                                savedTemp = oai_settings.temp_openai;
+                                oai_settings.temp_openai = settings.temperature;
                             }
                             try {
                                 response = await generateRaw({
@@ -1782,7 +1813,7 @@ async function runExtraction(fullRescan = false, logFn = null, progressFn = null
                                     oai_settings[selectedModelField] = savedModel;
                                 }
                                 if (settings.temperature !== undefined) {
-                                    oai_settings.temperature = savedTemp;
+                                    oai_settings.temp_openai = savedTemp;
                                 }
                             }
                         }
