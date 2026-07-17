@@ -1,12 +1,12 @@
 /**
  * Threadkeeper — LLM Memory for Long Roleplays
- * DreamTavern Extension · v1.0.3
+ * DreamTavern Extension · v1.0.5
  *
  * Extracts key facts from chat messages using an LLM and injects them
  * into the prompt so the model never forgets what matters.
  */
 
-import { debounce, waitUntilCondition } from '../../../utils.js';
+import { debounce, waitUntilCondition, timestampToMoment } from '../../../utils.js';
 import { getContext, extension_settings, saveMetadataDebounced } from '../../../extensions.js';
 import { ConnectionManagerRequestService } from '../../shared.js';
 import {
@@ -21,6 +21,7 @@ import {
     saveSettingsDebounced,
     saveSettings,
     getRequestHeaders,
+    showMoreMessages,
 } from '../../../../script.js';
 import { metadata_keys as authorNoteMetadataKeys } from '../../../authors-note.js';
 import { Popup, POPUP_TYPE } from '../../../popup.js';
@@ -39,6 +40,9 @@ import { installUninstallHook, wipeThreadKeeperData } from './uninstall.js';
 
 const MODULE_NAME = 'threadkeeper';
 const EXTENSION_PROMPT_KEY = 'threadkeeper_facts';
+// First line of the injected facts block. Also used by the prompt-ready guard
+// to detect whether the block survived chat-history budget truncation.
+const INJECTION_HEADER = '[Threadkeeper — Key Facts for Story Continuity]';
 
 const CATEGORIES = ['timeline', 'character', 'relationship', 'event', 'item', 'location', 'plot'];
 const CATEGORY_LABELS = { character: 'chr', relationship: 'rel', event: 'evt', item: 'itm', location: 'loc', plot: 'plt', timeline: 'time' };
@@ -216,8 +220,55 @@ function getExtractionSystemPrompt(batchSize = 0) {
         : getExtractionSystemPromptPolite(minFacts, maxFacts);
 }
 
+function parseCalendarDateMs(month, day, year) {
+    // Use UTC to avoid DST/timezone drift in day arithmetic.
+    return Date.UTC(year, month - 1, day);
+}
+
+function buildCalendarDayMapping() {
+    let ctx = null;
+    try { ctx = getContext(); } catch { /* extension not ready */ }
+    const fullChat = ctx?.chat;
+    if (!Array.isArray(fullChat) || fullChat.length === 0) return null;
+
+    const datesSeen = new Set();
+    for (const msg of fullChat) {
+        const text = msg?.mes;
+        if (typeof text !== 'string' || !text) continue;
+        const match = text.match(/⏳[^\d\n]*(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+        if (match) {
+            datesSeen.add(`${Number(match[1])}/${Number(match[2])}/${match[3]}`);
+        }
+    }
+
+    // Continuation chats carry a calendarEpoch — the earliest ⏳ dashboard date
+    // of the ORIGINAL chat in the lineage. Adding it to the date pool anchors
+    // Day 1 there, so day numbering continues across chats instead of the new
+    // chat's first dashboard date restarting the count at Day 1.
+    const epoch = getTkData().calendarEpoch;
+    if (typeof epoch === 'string' && /^\d{1,2}\/\d{1,2}\/\d{4}$/.test(epoch)) {
+        datesSeen.add(epoch);
+    }
+    if (datesSeen.size === 0) return null;
+
+    const parsed = Array.from(datesSeen).map(date => {
+        const [month, day, year] = date.split('/').map(Number);
+        return { date, ms: parseCalendarDateMs(month, day, year) };
+    }).sort((a, b) => a.ms - b.ms);
+
+    const earliestMs = parsed[0].ms;
+    const msPerDay = 24 * 60 * 60 * 1000;
+    const mapping = Object.create(null);
+    for (const item of parsed) {
+        mapping[item.date] = Math.round((item.ms - earliestMs) / msPerDay) + 1;
+    }
+
+    return { earliest: parsed[0].date, mapping };
+}
+
 function detectInfoboardContext(messages) {
     const found = [];
+    const batchDates = new Set();
     for (const msg of messages) {
         const text = msg.mes || '';
         const looksLikeBlock = /^\s*[\[{|<]/.test(text) || /\|\s*(day|date|time|morning|evening|night)/i.test(text);
@@ -226,10 +277,31 @@ function detectInfoboardContext(messages) {
             const snippet = text.slice(0, 300).replace(/\n+/g, ' ').trim();
             found.push(`  Message #${msg._tkIndex}: "${snippet}"`);
         }
+
+        const dashboardDate = text.match(/⏳[^\d\n]*(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+        if (dashboardDate) {
+            batchDates.add(`${Number(dashboardDate[1])}/${Number(dashboardDate[2])}/${dashboardDate[3]}`);
+        }
     }
-    if (found.length === 0) return null;
-    const plural = found.length > 1 ? 'blocks' : 'block';
-    return `[Timeline context — ${found.length} infoboard/status ${plural} detected in this batch. Use these as authoritative day/time anchors when extracting timeline facts from surrounding messages:\n${found.join('\n')}]`;
+
+    const parts = [];
+    if (found.length > 0) {
+        const plural = found.length > 1 ? 'blocks' : 'block';
+        parts.push(`[Timeline context — ${found.length} infoboard/status ${plural} detected in this batch. Use these as authoritative day/time anchors when extracting timeline facts from surrounding messages:\n${found.join('\n')}]`);
+    }
+
+    const dayMapping = batchDates.size > 0 ? buildCalendarDayMapping() : null;
+    if (dayMapping) {
+        const rows = Array.from(batchDates)
+            .filter(date => dayMapping.mapping[date])
+            .sort((a, b) => dayMapping.mapping[a] - dayMapping.mapping[b])
+            .map(date => `  ${date} = Day ${dayMapping.mapping[date]}`);
+        if (rows.length > 0) {
+            parts.push(`[CALENDAR ANCHOR: Day 1 = ${dayMapping.earliest} (earliest ⏳ dashboard date in this chat).\n${rows.join('\n')}\nUse these Day N values verbatim for facts whose source message has the corresponding ⏳ date.\nDo NOT just increment Day N when the dashboard date changes — look up the date in the table above.]`);
+        }
+    }
+
+    return parts.length > 0 ? parts.join('\n\n') : null;
 }
 
 function buildExtractionPrompt(messages, existingFacts) {
@@ -262,10 +334,20 @@ function buildExtractionPrompt(messages, existingFacts) {
     // Inject the latest timeline fact as an explicit "continue from here" anchor.
     // Picked by source_index (the message it came from), so it is always the true
     // chronological anchor — survives hidden messages and out-of-order extractions.
+    // Anchor on the latest timeline fact from BEFORE this batch's first
+    // message. For normal incremental scans that's every fact (unchanged
+    // behavior); for Heal Gaps batches refilling an early range it stops the
+    // chat's newest "Day 47" anchor from forcing Day >= 47 onto messages that
+    // actually happened around Day 12.
+    const batchStart = Number(messages?.[0]?._tkIndex) || Number.MAX_SAFE_INTEGER;
     const timelineFacts = (existingFacts || [])
-        .filter(f => f.category === 'timeline' && Number.isFinite(getFactSourceIndex(f)));
+        .filter(f => f.category === 'timeline' && Number.isFinite(getFactSourceIndex(f)) && getFactSourceIndex(f) < batchStart);
+    // >= so equal source indexes resolve to the LAST fact in array order. Facts
+    // carried into a continuation chat all have sourceIndex 0 but keep their
+    // original chronological insertion order, so last-wins picks the newest
+    // carried "Day N" anchor instead of the oldest.
     const latestAnchor = timelineFacts.reduce(
-        (best, f) => (!best || getFactSourceIndex(f) > getFactSourceIndex(best) ? f : best),
+        (best, f) => (!best || getFactSourceIndex(f) >= getFactSourceIndex(best) ? f : best),
         null,
     );
     if (latestAnchor) {
@@ -366,6 +448,9 @@ let archiveSearchQuery = '';
 let activeFilter = 'all';
 let mobileStyleLink = null;
 let autoScanPopupHideTimer = null;
+// Last injection text registered via setExtensionPrompt — used by the
+// prompt-ready guard to restore the block if budgeting truncated it out.
+let lastInjectionText = '';
 const modelCatalogCache = new Map();
 
 // ═══════════════════════════════════════════════════════════════════
@@ -876,32 +961,57 @@ function unpinAllFacts() {
 // row with nothing extractable. Used by the "Heal Gaps" config action.
 function findFactGaps(minSize = 5) {
     const facts = getFacts();
+    const archive = getArchive();
     const lastScanned = getLastScannedIndex();
-    if (facts.length === 0 || lastScanned <= 0) return [];
+    if ((facts.length === 0 && archive.length === 0) || lastScanned <= 0) return [];
 
+    // A fact ANYWHERE — active or archive — proves its source message was
+    // extracted. The archive is where old facts land when the active cap
+    // overflows, not a sign the message was skipped; ignoring it made every
+    // long chat's archived early range look like one giant bogus gap.
     const factsAtMsg = new Set();
-    for (const f of facts) {
+    for (const f of [...facts, ...archive]) {
         const idx = Number(f.sourceIndex || 0);
         if (idx > 0) factsAtMsg.add(idx);
     }
 
+    // Only messages extraction would actually scan can form a gap. Empty
+    // messages — and hidden (is_system) ones while "scan hidden" is off —
+    // are skipped by runExtraction, so they can never be healed; counting
+    // them re-reported the same pseudo-gap after every heal run.
+    const skipHidden = getSettings().scanHidden === false;
+    const chat = getContext().chat || [];
+    const isScannable = (msgIdx) => {
+        const msg = chat[msgIdx - 1];
+        if (!msg) return false;
+        if (skipHidden && msg.is_system) return false;
+        return !!(msg.mes && msg.mes.trim().length > 0);
+    };
+
+    // Unscannable messages are neutral: they neither extend a run nor break
+    // it, so scannable fact-less messages on both sides of a hidden stretch
+    // still count as one gap. `length` counts scannable messages only.
     const gaps = [];
-    let gapStart = null;
-    for (let i = 1; i <= lastScanned; i++) {
+    let run = null;
+    const closeRun = () => {
+        if (run && run.length >= minSize) gaps.push(run);
+        run = null;
+    };
+    const scanEnd = Math.min(lastScanned, chat.length);
+    for (let i = 1; i <= scanEnd; i++) {
         if (factsAtMsg.has(i)) {
-            if (gapStart !== null) {
-                const length = i - gapStart;
-                if (length >= minSize) gaps.push({ start: gapStart, end: i - 1, length });
-                gapStart = null;
-            }
-        } else if (gapStart === null) {
-            gapStart = i;
+            closeRun();
+            continue;
+        }
+        if (!isScannable(i)) continue;
+        if (run === null) {
+            run = { start: i, end: i, length: 1 };
+        } else {
+            run.end = i;
+            run.length++;
         }
     }
-    if (gapStart !== null) {
-        const length = lastScanned - gapStart + 1;
-        if (length >= minSize) gaps.push({ start: gapStart, end: lastScanned, length });
-    }
+    closeRun();
     return gaps;
 }
 
@@ -1000,12 +1110,19 @@ function stopExtraction() {
 // CROSS-CHAT PINNED FACTS
 // ═══════════════════════════════════════════════════════════════════
 
+// Key for the cross-chat pinned store: group id for group chats (this_chid is
+// undefined there), character id for solo chats. Group ids are uuids and
+// character ids are numeric indexes, so the two can never collide.
+function getCrossChatKey() {
+    const context = getContext();
+    return String(context.groupId ?? context.characterId ?? '');
+}
+
 function syncPinnedToGlobal() {
     const settings = getSettings();
     if (!settings.crossChatPinned) return;
 
-    const context = getContext();
-    const charKey = String(context.characterId ?? '');
+    const charKey = getCrossChatKey();
     if (!charKey) return;
 
     if (!extension_settings[MODULE_NAME].globalPinnedFacts) {
@@ -1029,8 +1146,7 @@ function restorePinnedFromGlobal() {
     const settings = getSettings();
     if (!settings.crossChatPinned) return;
 
-    const context = getContext();
-    const charKey = String(context.characterId ?? '');
+    const charKey = getCrossChatKey();
     if (!charKey) return;
 
     const globalPinned = extension_settings[MODULE_NAME].globalPinnedFacts?.[charKey];
@@ -1056,18 +1172,191 @@ function restorePinnedFromGlobal() {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// GROUP CONTINUATION
+// ═══════════════════════════════════════════════════════════════════
+
+// Per-group config lives in extension_settings (names only — never fact
+// content, so a big archive can't bloat settings.json):
+//   groupContinuity: { [groupId]: { enabled: bool, chats: [chatFileName] } }
+// An empty `chats` list means every chat in the group is part of the
+// continuation pool.
+function getGroupContinuityConfig(groupId, create = false) {
+    if (!groupId) return null;
+    const settings = getSettings();
+    if (!settings.groupContinuity) {
+        if (!create) return settings.groupContinuity?.[groupId] || null;
+        settings.groupContinuity = {};
+    }
+    if (!settings.groupContinuity[groupId] && create) {
+        settings.groupContinuity[groupId] = { enabled: false, chats: [] };
+    }
+    return settings.groupContinuity[groupId] || null;
+}
+
+async function fetchGroupChatFile(chatId) {
+    try {
+        const response = await fetch('/api/chats/group/get', {
+            method: 'POST',
+            headers: getRequestHeaders(),
+            body: JSON.stringify({ id: chatId }),
+        });
+        if (!response.ok) return null;
+        const data = await response.json();
+        return Array.isArray(data) ? data : null;
+    } catch {
+        return null;
+    }
+}
+
+// Earliest ⏳ dashboard date in a message array, normalized to the same
+// "M/D/YYYY" format buildCalendarDayMapping uses for its date pool.
+function findEarliestDashboardDate(messages) {
+    let earliest = null;
+    for (const msg of messages) {
+        const text = msg?.mes;
+        if (typeof text !== 'string' || !text) continue;
+        const match = text.match(/⏳[^\d\n]*(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+        if (!match) continue;
+        const ms = parseCalendarDateMs(Number(match[1]), Number(match[2]), Number(match[3]));
+        if (earliest === null || ms < earliest.ms) {
+            earliest = { ms, date: `${Number(match[1])}/${Number(match[2])}/${match[3]}` };
+        }
+    }
+    return earliest?.date || null;
+}
+
+let isSeedingContinuation = false;
+
+/**
+ * If the current chat is a group chat with continuation enabled and no
+ * ThreadKeeper data of its own yet, carry facts + archive over from the most
+ * recently active chat in the continuation pool. Returns true if seeded.
+ */
+async function maybeSeedGroupContinuation() {
+    if (isSeedingContinuation) return false;
+
+    const settings = getSettings();
+    if (!settings.enabled) return false;
+
+    const context = getContext();
+    const groupId = context.groupId;
+    if (!groupId) return false;
+
+    const cfg = getGroupContinuityConfig(groupId);
+    if (!cfg?.enabled) return false;
+
+    const data = getTkData();
+    if ((data.facts?.filter(f => f !== null).length || 0) > 0) return false;
+    if ((data.archive?.filter(f => f !== null).length || 0) > 0) return false;
+
+    const group = (context.groups || []).find(g => g.id === groupId);
+    if (!group || !Array.isArray(group.chats)) return false;
+
+    const currentChatId = group.chat_id;
+    // Pool: the saved selection (pruned of renamed/deleted chats), or the whole
+    // group when nothing is selected. Never the current chat itself.
+    const selected = Array.isArray(cfg.chats) ? cfg.chats.filter(id => group.chats.includes(id)) : [];
+    const pool = (selected.length > 0 ? selected : group.chats).filter(id => id !== currentChatId);
+    if (pool.length === 0) return false;
+
+    isSeedingContinuation = true;
+    try {
+        const startChatId = context.getCurrentChatId();
+        let best = null; // { chatId, tk, epoch, lastMesTime }
+
+        for (const chatId of pool) {
+            // User switched chats while we were fetching — abort before any write.
+            if (getContext().getCurrentChatId() !== startChatId) return false;
+
+            const fileData = await fetchGroupChatFile(chatId);
+            if (!Array.isArray(fileData) || fileData.length === 0) continue;
+
+            const header = Object.hasOwn(fileData[0] || {}, 'chat_metadata') ? fileData.shift() : null;
+            const tk = header?.chat_metadata?.threadkeeper;
+            const factCount = (tk?.facts || []).filter(f => f).length;
+            const archiveCount = (tk?.archive || []).filter(f => f).length;
+            if (!tk || (factCount === 0 && archiveCount === 0)) continue;
+
+            const lastMes = fileData.length ? fileData[fileData.length - 1] : null;
+            const momentVal = lastMes?.send_date ? timestampToMoment(lastMes.send_date).valueOf() : 0;
+            const lastMesTime = Number.isFinite(momentVal) ? momentVal : 0;
+
+            // Prefer a chat that itself carries an epoch (it chains back to the
+            // lineage's original chat) over re-deriving from its own messages.
+            const epoch = tk.calendarEpoch || findEarliestDashboardDate(fileData);
+
+            // >= so ties (missing dates) resolve to the later chat in pool order
+            // — group.chats is append-ordered, so later = newer.
+            if (!best || lastMesTime >= best.lastMesTime) {
+                best = { chatId, tk, epoch, lastMesTime };
+            }
+        }
+
+        if (!best) return false;
+        if (getContext().getCurrentChatId() !== startChatId) return false;
+
+        // Carried items keep pin state and identity but drop their message
+        // pointer — sourceIndex refers to the SOURCE chat's message numbers,
+        // which mean nothing here. origSourceIndex is kept for provenance and
+        // so the chronological insertion order stays reconstructible.
+        const mapCarried = (f) => ({
+            ...f,
+            sourceIndex: 0,
+            origSourceIndex: Number(f.sourceIndex) || 0,
+            carriedFrom: best.chatId,
+        });
+
+        const freshData = getTkData();
+        freshData.facts = (best.tk.facts || []).filter(f => f).map(mapCarried);
+        freshData.archive = (best.tk.archive || []).filter(f => f).map(mapCarried);
+        freshData.lastScannedIndex = 0;
+        delete freshData.pausedOnEmpties;
+        if (best.epoch) freshData.calendarEpoch = best.epoch;
+        freshData.continuation = { fromChat: best.chatId, seededAt: Date.now() };
+        setTkData(freshData);
+        saveMetadataDebounced.flush?.();
+
+        // Keep the lineage going: future chats should see THIS chat as part of
+        // the continuation. Only when the user has an explicit selection — an
+        // empty list already means "all chats in the group".
+        if (selected.length > 0 && !cfg.chats.includes(currentChatId) && currentChatId) {
+            cfg.chats.push(currentChatId);
+            saveSettingsDebounced();
+        }
+
+        syncPinnedToGlobal();
+
+        const carriedFacts = freshData.facts.length;
+        const carriedArchive = freshData.archive.length;
+        console.log(`[ThreadKeeper] Continuation: carried ${carriedFacts} facts + ${carriedArchive} archived from "${best.chatId}"`);
+        if (typeof toastr !== 'undefined') {
+            toastr.success(
+                `Carried ${carriedFacts} fact${carriedFacts === 1 ? '' : 's'} + ${carriedArchive} archived from "${best.chatId}"`,
+                'ThreadKeeper — Group Continuation',
+                { timeOut: 6000, progressBar: true },
+            );
+        }
+        return true;
+    } finally {
+        isSeedingContinuation = false;
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // PROMPT INJECTION
 // ═══════════════════════════════════════════════════════════════════
 
 async function injectFacts() {
     const settings = getSettings();
     if (!settings.enabled) {
+        lastInjectionText = '';
         setExtensionPrompt(EXTENSION_PROMPT_KEY, '', extension_prompt_types.IN_CHAT, 0);
         return;
     }
 
     const facts = getFacts();
     if (facts.length === 0) {
+        lastInjectionText = '';
         setExtensionPrompt(EXTENSION_PROMPT_KEY, '', extension_prompt_types.IN_CHAT, 0);
         return;
     }
@@ -1077,7 +1366,7 @@ async function injectFacts() {
     const regular = facts.filter(f => !f.pinned);
 
     // Build injection text, prioritizing pinned facts
-    let lines = ['[Threadkeeper — Key Facts for Story Continuity]', ''];
+    let lines = [INJECTION_HEADER, ''];
 
     if (pinned.length > 0) {
         lines.push('PINNED (always remember):');
@@ -1109,7 +1398,7 @@ async function injectFacts() {
         regular.splice(factsToKeep);
 
         // Rebuild once with the trimmed set
-        lines = ['[Threadkeeper — Key Facts for Story Continuity]', ''];
+        lines = [INJECTION_HEADER, ''];
         if (pinned.length > 0) {
             lines.push('PINNED (always remember):');
             for (const f of pinned) lines.push(`• [${f.category.toUpperCase()}] ${f.text}`);
@@ -1125,10 +1414,12 @@ async function injectFacts() {
     const injectionPlacement = getInjectionPlacementState(settings);
 
     if (injectionPlacement.skipInjection) {
+        lastInjectionText = '';
         setExtensionPrompt(EXTENSION_PROMPT_KEY, '', extension_prompt_types.IN_CHAT, 0);
         return injectionText;
     }
 
+    lastInjectionText = injectionText;
     setExtensionPrompt(
         EXTENSION_PROMPT_KEY,
         injectionText,
@@ -1139,6 +1430,59 @@ async function injectFacts() {
     );
 
     return injectionText;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// INJECTION GUARD (Chat Completion)
+// ═══════════════════════════════════════════════════════════════════
+
+// In-chat injections are spliced into the raw history pool, which the chat
+// completion builder consumes newest→oldest and STOPS filling the moment the
+// token budget runs out. A facts block anchored deep in the history — "Top of
+// chat history" (depth 10000) especially, but any depth beyond the truncation
+// point — is silently dropped in exactly the long, context-full chats where
+// ThreadKeeper matters most. This guard runs after the final prompt is
+// assembled: if the block is missing, it re-inserts it at the top of the
+// surviving history so in-chat placements always deliver.
+function onChatCompletionPromptReady(eventData) {
+    try {
+        if (eventData?.dryRun) return;
+        if (!Array.isArray(eventData?.chat) || !lastInjectionText) return;
+
+        const settings = getSettings();
+        if (!settings.enabled) return;
+
+        const placement = getInjectionPlacementState(settings);
+        if (placement.skipInjection) return;
+        if (placement.position !== extension_prompt_types.IN_CHAT) return;
+
+        const containsHeader = (content) => {
+            if (typeof content === 'string') return content.includes(INJECTION_HEADER);
+            if (Array.isArray(content)) {
+                return content.some(part => typeof part?.text === 'string' && part.text.includes(INJECTION_HEADER));
+            }
+            return false;
+        };
+        if (eventData.chat.some(msg => containsHeader(msg?.content))) return;
+
+        const roleMap = {
+            [extension_prompt_roles.SYSTEM]: 'system',
+            [extension_prompt_roles.USER]: 'user',
+            [extension_prompt_roles.ASSISTANT]: 'assistant',
+        };
+        const role = roleMap[placement.role ?? settings.injectRole] || 'system';
+
+        // Top of the remaining history = right before the first real chat
+        // message. Leading system prompts (main, character card, lore) stay
+        // above; if there are no chat messages at all, append at the end.
+        let insertIdx = eventData.chat.findIndex(msg => msg?.role === 'user' || msg?.role === 'assistant');
+        if (insertIdx === -1) insertIdx = eventData.chat.length;
+
+        eventData.chat.splice(insertIdx, 0, { role, content: lastInjectionText });
+        console.warn('[ThreadKeeper] Facts block was truncated out of chat history by the token budget — re-inserted at the top of the remaining history.');
+    } catch (err) {
+        console.error('[ThreadKeeper] Prompt-ready injection guard failed:', err);
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -1786,6 +2130,38 @@ function buildConfigHTML() {
             </button>`;
     }).join('');
 
+    // Group continuation — only offered when the open chat belongs to a group.
+    let continuitySection = '';
+    const groupId = getContext().groupId;
+    if (groupId) {
+        const continuityCfg = getGroupContinuityConfig(groupId);
+        const continuityEnabled = continuityCfg?.enabled === true;
+        continuitySection = `
+    <!-- Group continuation -->
+    <div class="tk-cfg-section" id="tk-cfg-continuity-section">
+        <div class="tk-cfg-title continuity"><span>🧬</span> Group continuation</div>
+        <div class="tk-cfg-row">
+            <div class="tk-cfg-label">
+                Continue this group's story across chats
+                <span class="tk-cfg-hint">When a chat of this group has no ThreadKeeper data yet, facts + archive carry over from the most recent continuation chat — day numbering continues instead of restarting</span>
+            </div>
+            <div class="tk-pills" id="tk-cfg-continuity-enabled">
+                <button class="tk-pill${continuityEnabled ? ' active' : ''}" data-v="on" type="button">Enabled</button>
+                <button class="tk-pill${continuityEnabled ? '' : ' active'}" data-v="off" type="button">Disabled</button>
+            </div>
+        </div>
+        <div class="tk-cfg-row tk-cfg-row-continuity-chats">
+            <div class="tk-cfg-label">
+                Continuation chats
+                <span class="tk-cfg-hint">Pick which of this group's chats form the continuation. Leave empty to treat every chat in the group as part of it</span>
+            </div>
+            <div class="tk-continuity-select-wrap">
+                <select id="tk-cfg-continuity-chats" multiple="multiple"></select>
+            </div>
+        </div>
+    </div>`;
+    }
+
     return `
     <!-- Connection -->
     <div class="tk-cfg-section">
@@ -1888,6 +2264,7 @@ function buildConfigHTML() {
             </div>
         </div>
     </div>
+    ${continuitySection}
 
     <!-- Scanning -->
     <div class="tk-cfg-section">
@@ -2006,6 +2383,54 @@ function closeTerminal() {
     }
 }
 
+function getRenderedChatMessageIds() {
+    return Array.from(document.querySelectorAll('#chat .mes'))
+        .map(el => Number(el.getAttribute('mesid')))
+        .filter(id => Number.isFinite(id));
+}
+
+function waitForNextFrame() {
+    return new Promise(resolve => requestAnimationFrame(() => resolve()));
+}
+
+async function findRenderedSourceMessage(sourceIdx) {
+    const targetMesid = String(sourceIdx);
+    let chatMsg = document.querySelector(`#chat .mes[mesid="${targetMesid}"]`);
+    if (chatMsg) return chatMsg;
+
+    const renderedIds = getRenderedChatMessageIds();
+    const firstRenderedId = Math.min(...renderedIds);
+    if (!Number.isFinite(firstRenderedId) || firstRenderedId <= sourceIdx) {
+        return null;
+    }
+
+    await showMoreMessages(firstRenderedId - sourceIdx);
+    await waitForNextFrame();
+    return document.querySelector(`#chat .mes[mesid="${targetMesid}"]`);
+}
+
+async function jumpToSourceMessage(sourceIdx, sourceKind) {
+    if (sourceIdx <= 0) return;
+
+    closeTerminal();
+    await waitForNextFrame();
+
+    const chatContainer = document.getElementById('chat');
+    const chatMsg = await findRenderedSourceMessage(sourceIdx);
+
+    if (chatMsg && chatContainer) {
+        const containerTop = chatContainer.getBoundingClientRect().top;
+        const msgTop = chatMsg.getBoundingClientRect().top;
+        const offset = msgTop - containerTop + chatContainer.scrollTop - (chatContainer.clientHeight / 2) + (chatMsg.offsetHeight / 2);
+        chatContainer.scrollTo({ top: offset, behavior: 'smooth' });
+        chatMsg.style.transition = 'box-shadow 0.3s ease';
+        chatMsg.style.boxShadow = '0 0 20px rgba(255,213,79,0.3)';
+        setTimeout(() => { chatMsg.style.boxShadow = ''; }, 3000);
+    } else if (!chatMsg) {
+        console.warn(`[TK-SRC ${sourceKind}] chatMsg not found in DOM for mesid="${sourceIdx}". Available rendered mesids:`, getRenderedChatMessageIds());
+    }
+}
+
 function refreshTerminalContent() {
     const body = document.getElementById('tk-body');
     if (!body) return;
@@ -2013,11 +2438,19 @@ function refreshTerminalContent() {
     body.innerHTML = '';
 
     const context = getContext();
-    const charName = context.name2 || 'Unknown';
+    // name2 is the solo-chat character name and is empty in group chats —
+    // resolve the group's name (with a 👥 marker) there instead.
+    const group = context.groupId ? (context.groups || []).find(g => g.id === context.groupId) : null;
+    const charName = group ? `👥 ${group.name || 'Group'}` : (context.name2 || 'Unknown');
     const chatLength = context.chat?.length || 0;
 
-    addTerminalLine(`<span class="tk-cmd">threadkeeper v1.0.3</span>`);
+    addTerminalLine(`<span class="tk-cmd">threadkeeper v1.0.5</span>`);
     addTerminalLine(`<span class="tk-dim">Loaded chat: ${charName} · ${chatLength} messages</span>`);
+
+    const continuation = getTkData().continuation;
+    if (continuation?.fromChat) {
+        addTerminalLine(`<span class="tk-dim">↳ continuation of </span><span class="tk-info">${escapeHtml(continuation.fromChat)}</span>`);
+    }
 
     // Show existing facts sorted by source message (chronological)
     const facts = sortFactsForDisplay(getFacts());
@@ -2069,6 +2502,11 @@ function createFactElement(fact) {
     const div = document.createElement('div');
     div.className = `tk-fact cat-${fact.category}`;
     div.dataset.factId = fact.id;
+    // No source button when sourceIndex <= 0 — carried/seeded facts point at
+    // another chat's message numbers, so there is nothing here to jump to.
+    const srcBtn = Number(fact.sourceIndex) > 0
+        ? `<button class="tk-micro-btn src-btn" data-action="source" data-source="${fact.sourceIndex}" title="Source message">↗${fact.sourceIndex}</button>`
+        : '';
     div.innerHTML = `
         <span class="fact-tag">${getFactCategoryDisplay(fact.category)}</span>
         <span class="fact-body">${escapeHtml(fact.text)}</span>
@@ -2076,7 +2514,7 @@ function createFactElement(fact) {
             <button class="tk-micro-btn edit-btn" data-action="edit" data-fact-id="${fact.id}" title="Edit fact">🪄</button>
             <button class="tk-micro-btn pin-btn ${fact.pinned ? 'pinned' : ''}" data-action="pin" data-fact-id="${fact.id}" title="Pin — pinned facts are always remembered">📌</button>
             <button class="tk-micro-btn" data-action="archive" data-fact-id="${fact.id}" title="Archive this fact">📦</button>
-            <button class="tk-micro-btn src-btn" data-action="source" data-source="${fact.sourceIndex}" title="Source message">↗${fact.sourceIndex}</button>
+            ${srcBtn}
             <button class="tk-micro-btn del-btn" data-action="delete" data-fact-id="${fact.id}" title="Remove">✕</button>
         </span>`;
     return div;
@@ -2147,7 +2585,7 @@ function updateStats() {
     if (facts.length > 0) {
         const pinnedFacts = facts.filter(f => f.pinned);
         const regularFacts = facts.filter(f => !f.pinned);
-        const lines = ['[Threadkeeper — Key Facts for Story Continuity]', ''];
+        const lines = [INJECTION_HEADER, ''];
         if (pinnedFacts.length > 0) {
             lines.push('PINNED (always remember):');
             for (const f of pinnedFacts) lines.push(`• [${f.category.toUpperCase()}] ${f.text}`);
@@ -2333,6 +2771,9 @@ function renderArchivePanel() {
         } else {
             for (const fact of factsToShow) {
                 const dateStr = fact.archivedAt ? new Date(fact.archivedAt).toLocaleString() : '';
+                const srcBtn = Number(fact.sourceIndex) > 0
+                    ? `<button class="tk-micro-btn src-btn" data-archive-action="source" data-source="${fact.sourceIndex}" title="Source message">↗${fact.sourceIndex}</button>`
+                    : '';
                 html += `
                     <div class="tk-fact cat-${fact.category}" data-fact-id="${fact.id}" style="margin-bottom:6px;">
                         <span class="fact-tag">${getFactCategoryDisplay(fact.category)}</span>
@@ -2340,7 +2781,7 @@ function renderArchivePanel() {
                         <span class="fact-actions-row">
                             <span style="font-size:10px;opacity:0.5;margin-right:6px;">${dateStr}</span>
                             <button class="tk-micro-btn" data-archive-action="restore" data-fact-id="${fact.id}" title="Restore to active memory">↩</button>
-                            <button class="tk-micro-btn src-btn" data-archive-action="source" data-source="${fact.sourceIndex}" title="Source message">↗${fact.sourceIndex}</button>
+                            ${srcBtn}
                             <button class="tk-micro-btn del-btn" data-archive-action="delete" data-fact-id="${fact.id}" title="Delete forever">✕</button>
                         </span>
                     </div>
@@ -2451,22 +2892,7 @@ function renderArchivePanel() {
                 }
             } else if (action === 'source') {
                 const sourceIdx = parseInt(btn.dataset.source);
-                if (sourceIdx > 0) {
-                    closeTerminal();
-                    setTimeout(() => {
-                        const chatContainer = document.getElementById('chat');
-                        const chatMsg = document.querySelector(`#chat .mes[mesid="${sourceIdx - 1}"]`);
-                        if (chatMsg && chatContainer) {
-                            const containerTop = chatContainer.getBoundingClientRect().top;
-                            const msgTop = chatMsg.getBoundingClientRect().top;
-                            const offset = msgTop - containerTop + chatContainer.scrollTop - (chatContainer.clientHeight / 2) + (chatMsg.offsetHeight / 2);
-                            chatContainer.scrollTo({ top: offset, behavior: 'smooth' });
-                            chatMsg.style.transition = 'box-shadow 0.3s ease';
-                            chatMsg.style.boxShadow = '0 0 20px rgba(255,213,79,0.3)';
-                            setTimeout(() => { chatMsg.style.boxShadow = ''; }, 3000);
-                        }
-                    }, 16);
-                }
+                await jumpToSourceMessage(sourceIdx, 'archive');
             }
         });
     });
@@ -2711,12 +3137,14 @@ function attachConfigListeners() {
                 targetIndexes,
             );
 
-            syncFactPinDOM();
-            addCursorLine();
-            updateStats();
             setExtractionRunningUI(false);
             extractBtn?.classList.remove('running');
             reextractBtn?.classList.remove('running');
+            // Rebuild the fact list so healed facts slot into chronological
+            // order instead of dangling at the bottom of the run log.
+            refreshTerminalContent();
+            addTerminalLine('<span class="tk-success">🩹 Heal Gaps finished — facts above are merged in chronological order.</span>');
+            addCursorLine();
         });
     }
 
@@ -2804,6 +3232,70 @@ function attachConfigListeners() {
     // Model picker
     setupModelPicker();
     setupPlacementPicker();
+    setupGroupContinuityControls();
+}
+
+function setupGroupContinuityControls() {
+    const context = getContext();
+    const groupId = context.groupId;
+    if (!groupId) return;
+    if (!document.getElementById('tk-cfg-continuity-section')) return;
+
+    const cfg = getGroupContinuityConfig(groupId, true);
+
+    // Enabled/Disabled pills
+    const pillContainer = document.getElementById('tk-cfg-continuity-enabled');
+    if (pillContainer) {
+        pillContainer.addEventListener('click', (e) => {
+            const pill = e.target.closest('.tk-pill');
+            if (!pill) return;
+            pillContainer.querySelectorAll('.tk-pill').forEach(p => p.classList.remove('active'));
+            pill.classList.add('active');
+            cfg.enabled = pill.dataset.v === 'on';
+            saveSettingsDebounced();
+            // Turning it on in an empty chat should seed right away, not wait
+            // for the next chat switch.
+            if (cfg.enabled) {
+                void maybeSeedGroupContinuation().then(async (seeded) => {
+                    if (!seeded) return;
+                    await injectFacts();
+                    updateStats();
+                    if (isTerminalOpen && !showingConfig) refreshTerminalContent();
+                });
+            }
+        });
+    }
+
+    // Continuation-chats multi-select (select2 — searchable/filtering)
+    const selectEl = document.getElementById('tk-cfg-continuity-chats');
+    if (!selectEl || typeof jQuery === 'undefined' || typeof jQuery.fn.select2 !== 'function') return;
+
+    const group = (context.groups || []).find(g => g.id === groupId);
+    const groupChats = Array.isArray(group?.chats) ? group.chats : [];
+    const currentChatId = group?.chat_id;
+
+    // Prune saved selections that no longer exist (renamed/deleted chats).
+    cfg.chats = (cfg.chats || []).filter(id => groupChats.includes(id));
+
+    for (const chatId of groupChats) {
+        const label = chatId === currentChatId ? `${chatId} (current)` : chatId;
+        selectEl.appendChild(new Option(label, chatId, false, cfg.chats.includes(chatId)));
+    }
+
+    const $select = jQuery(selectEl);
+    $select.select2({
+        width: '100%',
+        placeholder: 'All chats in this group',
+        closeOnSelect: false,
+        // Keep the dropdown inside the terminal overlay so it isn't hidden
+        // behind it (the overlay sits at z-index 10000).
+        dropdownParent: jQuery('#tk-config'),
+    });
+    $select.on('change', () => {
+        const values = $select.val() || [];
+        cfg.chats = values.map(String);
+        saveSettingsDebounced();
+    });
 }
 
 function saveConfigFromUI() {
@@ -3847,22 +4339,7 @@ function attachEventListeners() {
                 }
             } else if (action === 'source') {
                 const sourceIdx = parseInt(btn.dataset.source);
-                if (sourceIdx > 0) {
-                    closeTerminal();
-                    setTimeout(() => {
-                        const chatContainer = document.getElementById('chat');
-                        const chatMsg = document.querySelector(`#chat .mes[mesid="${sourceIdx - 1}"]`);
-                        if (chatMsg && chatContainer) {
-                            const containerTop = chatContainer.getBoundingClientRect().top;
-                            const msgTop = chatMsg.getBoundingClientRect().top;
-                            const offset = msgTop - containerTop + chatContainer.scrollTop - (chatContainer.clientHeight / 2) + (chatMsg.offsetHeight / 2);
-                            chatContainer.scrollTo({ top: offset, behavior: 'smooth' });
-                            chatMsg.style.transition = 'box-shadow 0.3s ease';
-                            chatMsg.style.boxShadow = '0 0 20px rgba(255,213,79,0.3)';
-                            setTimeout(() => { chatMsg.style.boxShadow = ''; }, 3000);
-                        }
-                    }, 16);
-                }
+                await jumpToSourceMessage(sourceIdx, 'active');
             }
         });
     }
@@ -3991,6 +4468,10 @@ async function onChatChanged() {
     // archive would render stale indexes against this chat's archive.
     viewingFolderRange = null;
     archiveSearchQuery = '';
+    // Continuation seeding runs BEFORE the pin-only global seeding: a full
+    // carry includes the pinned facts, and once the chat has data the pin
+    // seeding bails out on its own.
+    await maybeSeedGroupContinuation();
     restorePinnedFromGlobal();
     await injectFacts();
     if (isTerminalOpen) refreshTerminalContent();
@@ -4132,6 +4613,7 @@ function cleanup() {
     eventSource.off(event_types.CHAT_CHANGED, onChatChanged);
     eventSource.off(event_types.CHARACTER_MESSAGE_RENDERED, onNewMessage);
     eventSource.off(event_types.USER_MESSAGE_RENDERED, onNewMessage);
+    eventSource.off(event_types.CHAT_COMPLETION_PROMPT_READY, onChatCompletionPromptReady);
     document.removeEventListener('click', handleGlobalClick);
     mobileStyleLink?.remove();
     mobileStyleLink = null;
@@ -4189,6 +4671,7 @@ jQuery(async function () {
     eventSource.on(event_types.CHAT_CHANGED, onChatChanged);
     eventSource.on(event_types.CHARACTER_MESSAGE_RENDERED, onNewMessage);
     eventSource.on(event_types.USER_MESSAGE_RENDERED, onNewMessage);
+    eventSource.on(event_types.CHAT_COMPLETION_PROMPT_READY, onChatCompletionPromptReady);
 
     // Clean up when the page unloads (extension disabled without reload, or page close)
     window.addEventListener('beforeunload', cleanup, { once: true });
@@ -4197,6 +4680,7 @@ jQuery(async function () {
     registerSlashCommands();
 
     // Initial injection if chat already loaded
+    await maybeSeedGroupContinuation();
     await injectFacts();
     void maybeRunAutoScan();
 
