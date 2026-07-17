@@ -166,6 +166,7 @@ RULES:
 - Focus on facts that would be LOST if the model forgot earlier messages
 - Extract between ${minFacts} and ${maxFacts} facts per batch
 - Use "timeline" only for real day/time anchors, scene transitions, or major time skips. Timeline text must begin in this format: "Day N - at TIME [most significant thing that happened]". Example: "Day 14 - at 06:38 pm Savannah wakes". Use the current known day and time; if exact clock time is unknown, use the best available "at ..." time phrase such as "at dawn", "at midday", "at sunset", "at night", or "at unknown time". Message #1 = Day 1 unless that message explicitly states otherwise.
+- If the prompt includes a note like "[Temporal anchor for Message N: Day X | Date ... | Time HH:MM ...]", any timeline fact with source_index N MUST use that exact Day X and stated time instead of inferring or resetting the day number.
 - Do NOT create a timeline fact just to summarize every message. For user replies, extract important facts under the best non-timeline category (character, relationship, event, item, location, or plot) as long as source_index identifies the source message.
 - If one message is a clear montage or time skip that spans multiple distinct days, months, scenes, or clock times, you may extract multiple timeline facts for that same source_index, one per major time anchor, all using the same "Day N - at TIME ..." format.
 - Include: timeline anchors, character traits, relationships, important items, locations, plot developments, key events
@@ -187,6 +188,7 @@ RULES:
 - PROFANITY IS ALLOWED AND EXPECTED: Use it freely when it accurately captures character voice, attitude, kink, or dynamic. Don't censor, asterisk, soften, clinicalize, moralize, or replace explicit language with sanitized wording. Examples of what qualifies: fuck, shit, cock, pussy, ass, cunt, slut, whore, bastard, bitch, dick, cum, horny, filthy, depraved — use the actual word, not a stand-in. If a character is crude, aggressive, sexually explicit, humiliating, possessive, dominant, submissive, needy, or depraved, extract that plainly in those exact terms
 - Focus on facts that would be LOST if the model forgot earlier messages
 - Use "timeline" only for real day/time anchors, scene transitions, or major time skips. Timeline text must begin in this format: "Day N - at TIME [most significant thing that happened]". Example: "Day 14 - at 06:38 pm Savannah wakes". Use the current known day and time; if exact clock time is unknown, use the best available "at ..." time phrase such as "at dawn", "at midday", "at sunset", "at night", or "at unknown time". Message #1 = Day 1 unless that message explicitly states otherwise.
+- If the prompt includes a note like "[Temporal anchor for Message N: Day X | Date ... | Time HH:MM ...]", any timeline fact with source_index N MUST use that exact Day X and stated time instead of inferring or resetting the day number.
 - Do NOT create a timeline fact just to summarize every message. For user replies, extract important facts under the best non-timeline category (character, relationship, event, item, location, or plot) as long as source_index identifies the source message.
 - If one message is a clear montage or time skip that spans multiple distinct days, months, scenes, or clock times, you may extract multiple timeline facts for that same source_index, one per major time anchor, all using the same "Day N - at TIME ..." format.
 - Include: timeline anchors, physical traits (explicit if relevant), kinks/preferences, relationship dynamics, power dynamics, explicit acts that established a dynamic, important items, locations, plot
@@ -305,6 +307,37 @@ function detectInfoboardContext(messages) {
     return parts.length > 0 ? parts.join('\n\n') : null;
 }
 
+function extractMessageTemporalAnchor(text) {
+    const normalized = String(text || '').replace(/\r/g, '');
+    const dayMatch = normalized.match(/\bDAY\s*0*(\d+)\b/i);
+    const dateMatch = normalized.match(/\bDate:\s*(\d{1,2}\/\d{1,2}\/\d{4})/i) ||
+        normalized.match(/(\d{1,2}\/\d{1,2}\/\d{4})/);
+    const timeMatch = normalized.match(/\bTime:\s*([0-9]{1,2}:\d{2})(?:\s*[—–-]\s*([A-Za-z]+))?/i) ||
+        normalized.match(/\b([0-9]{1,2}:\d{2})(?:\s*[—–-]\s*([A-Za-z]+))?/i);
+
+    const day = dayMatch ? Number(dayMatch[1]) : null;
+    const date = dateMatch?.[1] || '';
+    const time = timeMatch?.[1] || '';
+    const phase = timeMatch?.[2] || '';
+
+    if (!day && !date && !time) {
+        return null;
+    }
+
+    const parts = [];
+    if (day) parts.push(`Day ${day}`);
+    if (date) parts.push(`Date ${date}`);
+    if (time) parts.push(`Time ${time}${phase ? ` (${phase})` : ''}`);
+
+    return {
+        day,
+        date,
+        time,
+        phase,
+        summary: parts.join(' | '),
+    };
+}
+
 function buildExtractionPrompt(messages, existingFacts) {
     const settings = getSettings();
     const dogMode = isDogMeOutTone(settings.extractionTone || 'Polite');
@@ -329,6 +362,10 @@ function buildExtractionPrompt(messages, existingFacts) {
 
     messages.forEach((msg, i) => {
         const sender = msg.is_user ? (msg.name || 'User') : (msg.name || 'Character');
+        const temporalAnchor = extractMessageTemporalAnchor(msg.mes);
+        if (temporalAnchor) {
+            prompt += `[Temporal anchor for Message ${msg._tkIndex}: ${temporalAnchor.summary}. Any timeline fact for source_index ${msg._tkIndex} MUST use this exact day/time anchor when present.]\n`;
+        }
         prompt += `[Message ${msg._tkIndex}] ${sender}: ${msg.mes}\n\n`;
     });
 
@@ -672,14 +709,24 @@ function getPreferredModelForProfile(profileId = getSettings().connectionProfile
     const normalizedProfileId = profileId || '__current__';
     const profile = normalizedProfileId !== '__current__' ? getSelectedConnectionProfile(normalizedProfileId) : null;
     const pickerModel = String(document.getElementById('tk-mp-selected')?.dataset?.modelId || '').trim();
+    const liveProfileModel = profile && profile.id === getCurrentConnectionProfileId() && profileUsesCurrentModel(profile)
+        ? String(getCurrentModelFromDom() || '').trim()
+        : '';
 
     if (normalizedProfileId === (settings.connectionProfile || '__current__')) {
         if (pickerModel && pickerModel !== 'Use default model') {
             return pickerModel;
         }
+        if (liveProfileModel) {
+            return liveProfileModel;
+        }
         if (settings.model) {
             return String(settings.model).trim();
         }
+    }
+
+    if (liveProfileModel) {
+        return liveProfileModel;
     }
 
     if (profile?.model) {
@@ -3782,6 +3829,11 @@ function getCurrentConnectionProfileId() {
     return extension_settings.connectionManager?.selectedProfile || null;
 }
 
+function profileUsesCurrentModel(profile) {
+    return Array.isArray(profile?.exclude) &&
+        profile.exclude.some(entry => String(entry || '').trim().toLowerCase() === 'model');
+}
+
 function getDefaultModelForSelection(profileId = getSettings().connectionProfile) {
     if (!profileId || profileId === '__current__') {
         return getSettings().model || getCurrentModelFromDom() || '';
@@ -3793,6 +3845,9 @@ function getDefaultModelForSelection(profileId = getSettings().connectionProfile
     }
 
     if (profile.id === getCurrentConnectionProfileId()) {
+        if (profileUsesCurrentModel(profile)) {
+            return String(getCurrentModelFromDom() || getSettings().model || '').trim();
+        }
         return String(profile.model || getCurrentModelFromDom() || '').trim();
     }
 
