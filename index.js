@@ -760,23 +760,23 @@ function getPreferredModelForProfile(profileId = getSettings().connectionProfile
     const normalizedProfileId = profileId || '__current__';
     const profile = normalizedProfileId !== '__current__' ? getSelectedConnectionProfile(normalizedProfileId) : null;
     const pickerModel = String(document.getElementById('tk-mp-selected')?.dataset?.modelId || '').trim();
-    const liveProfileModel = profile && profile.id === getCurrentConnectionProfileId() && profileUsesCurrentModel(profile)
-        ? String(getCurrentModelFromDom() || '').trim()
-        : '';
+    const liveProfileModel = getLiveModelForProfile(normalizedProfileId, settings);
+    const shouldPreferLiveModel = normalizedProfileId === '__current__' ||
+        (profile && profile.id === getCurrentConnectionProfileId() && profileUsesCurrentModel(profile));
 
     if (normalizedProfileId === (settings.connectionProfile || '__current__')) {
+        if (shouldPreferLiveModel && liveProfileModel) {
+            return liveProfileModel;
+        }
         if (pickerModel && pickerModel !== 'Use default model') {
             return pickerModel;
-        }
-        if (liveProfileModel) {
-            return liveProfileModel;
         }
         if (settings.model) {
             return String(settings.model).trim();
         }
     }
 
-    if (liveProfileModel) {
+    if (shouldPreferLiveModel && liveProfileModel) {
         return liveProfileModel;
     }
 
@@ -1684,6 +1684,7 @@ async function runExtraction(fullRescan = false, logFn = null, progressFn = null
         };
 
         const settings = getSettings();
+        syncConfiguredModelSelection(settings.connectionProfile || '__current__', settings, true);
         let lastScanned = getLastScannedIndex();
         const resumeGate = canResumeAfterEmptyPause(settings);
         let skipHiddenForThisRun = false;
@@ -3483,9 +3484,11 @@ function setupGroupContinuityControls() {
 function saveConfigFromUI() {
     const connection = document.getElementById('tk-cfg-connection');
     if (connection) saveSetting('connectionProfile', connection.value);
+    const selectedProfileId = connection?.value || getSettings().connectionProfile;
+    const liveModel = syncConfiguredModelSelection(selectedProfileId, getSettings(), true);
 
     const model = document.getElementById('tk-mp-selected');
-    if (model) {
+    if (model && !liveModel) {
         const selectedModel = String(model.dataset.modelId || model.textContent || '').trim();
         saveSetting('model', selectedModel && selectedModel !== 'Use default model' ? selectedModel : '');
     }
@@ -3874,6 +3877,41 @@ function getCurrentModelFromDom() {
         document.querySelector('[id*="model"][id*="select"]');
 
     return String(fallbackControl?.value || '').trim();
+}
+
+function getLiveModelForProfile(profileId = getSettings().connectionProfile, settings = getSettings()) {
+    const normalizedProfileId = profileId || '__current__';
+    if (normalizedProfileId === '__current__') {
+        return String(getCurrentModelFromDom() || settings.model || '').trim();
+    }
+
+    const profile = getSelectedConnectionProfile(normalizedProfileId);
+    if (profile && profile.id === getCurrentConnectionProfileId() && profileUsesCurrentModel(profile)) {
+        return String(getCurrentModelFromDom() || settings.model || profile.model || '').trim();
+    }
+
+    return '';
+}
+
+function syncConfiguredModelSelection(profileId = getSettings().connectionProfile, settings = getSettings(), persist = false) {
+    const liveModel = getLiveModelForProfile(profileId, settings);
+    if (!liveModel) return '';
+
+    const modelDisplay = document.getElementById('tk-mp-selected');
+    if (modelDisplay && profileId === (settings.connectionProfile || '__current__')) {
+        modelDisplay.textContent = liveModel;
+        modelDisplay.dataset.modelId = liveModel;
+    }
+
+    if (settings.model !== liveModel) {
+        if (persist) {
+            saveSetting('model', liveModel);
+        } else {
+            settings.model = liveModel;
+        }
+    }
+
+    return liveModel;
 }
 
 function getCurrentConnectionProfileId() {
@@ -4299,8 +4337,9 @@ function syncUIFromSettings() {
     // Sync model display
     const modelDisplay = document.getElementById('tk-mp-selected');
     if (modelDisplay) {
-        modelDisplay.textContent = settings.model || 'Use default model';
-        modelDisplay.dataset.modelId = settings.model || '';
+        const resolvedModel = syncConfiguredModelSelection(settings.connectionProfile || '__current__', settings, false);
+        modelDisplay.textContent = resolvedModel || settings.model || 'Use default model';
+        modelDisplay.dataset.modelId = resolvedModel || settings.model || '';
     }
 
     // Sync budget pills
