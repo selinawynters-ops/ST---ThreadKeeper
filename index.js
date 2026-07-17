@@ -606,6 +606,57 @@ function normalizeTimelineFactText(text) {
     return String(text || '').trim().replace(/^(Day\s+\d+)\s*[—–-]\s*/i, '$1 - ');
 }
 
+function buildTimelineTimePhrase(anchor) {
+    if (anchor?.time) return anchor.time;
+    if (anchor?.phase) return anchor.phase.toLowerCase();
+    return 'unknown time';
+}
+
+function buildTimelinePrefixFromAnchor(anchor) {
+    if (!anchor?.day) return '';
+    return `Day ${anchor.day} - at ${buildTimelineTimePhrase(anchor)}`;
+}
+
+function stripTimelinePrefix(text) {
+    const normalized = normalizeTimelineFactText(text);
+    const standardPrefix = /^(Day\s+\d+\s*-\s*at\s+(?:\d{1,2}:\d{2}(?:\s*[ap]m)?|early morning|mid morning|late morning|morning|midday|early afternoon|late afternoon|afternoon|early evening|late evening|evening|late night|night|sunrise|sunset|dawn|dusk|midnight|noon|unknown time))\s+/i;
+    if (standardPrefix.test(normalized)) {
+        return normalized.replace(standardPrefix, '').trim();
+    }
+
+    const genericPrefix = /^Day\s+\d+\s*-\s*/i;
+    if (genericPrefix.test(normalized)) {
+        return normalized.replace(genericPrefix, '').replace(/^at\s+/i, '').trim();
+    }
+
+    return normalized;
+}
+
+function getTemporalAnchorForSourceIndex(sourceIndex) {
+    const idx = Number(sourceIndex) || 0;
+    if (idx <= 0) return null;
+
+    let ctx = null;
+    try { ctx = getContext(); } catch { /* extension not ready */ }
+    const message = Array.isArray(ctx?.chat) ? ctx.chat[idx - 1] : null;
+    return message ? extractMessageTemporalAnchor(message.mes) : null;
+}
+
+function enforceTimelineAnchorForFact(fact) {
+    const text = String(fact?.text || '').trim();
+    if (!text) return text;
+
+    const anchor = getTemporalAnchorForSourceIndex(fact?.source_index);
+    if (!anchor?.day) {
+        return normalizeTimelineFactText(text);
+    }
+
+    const prefix = buildTimelinePrefixFromAnchor(anchor);
+    const body = stripTimelinePrefix(text);
+    return body ? `${prefix} ${body}` : prefix;
+}
+
+
 function getFactCategoryDisplay(category) {
     return category;
 }
@@ -836,7 +887,7 @@ function addFacts(newFacts) {
     const addedFacts = [];
 
     for (const fact of newFacts) {
-        const factText = fact.category === 'timeline' ? normalizeTimelineFactText(fact.text) : fact.text;
+        const factText = fact.category === 'timeline' ? enforceTimelineAnchorForFact(fact) : fact.text;
         // Dedup: skip if already in active facts
         const isDupe = data.facts.some(f => f && f.text === factText);
         if (isDupe) continue;
