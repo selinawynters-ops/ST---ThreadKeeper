@@ -653,22 +653,6 @@ function getPreferredModelForProfile(profileId = getSettings().connectionProfile
     return String(getCurrentModelFromDom?.() || '').trim();
 }
 
-function buildCustomHeaderOverride(existingHeaders, secretValue) {
-    const headerBlocks = [];
-    const trimmedExisting = String(existingHeaders || '').trim();
-    const trimmedSecret = String(secretValue || '').trim();
-
-    if (trimmedExisting) {
-        headerBlocks.push(trimmedExisting);
-    }
-
-    if (trimmedSecret) {
-        headerBlocks.push(`Authorization: Bearer ${trimmedSecret}`);
-    }
-
-    return headerBlocks.join('\n').trim();
-}
-
 function countNonHiddenMessagesInRange(startIndex, endIndex) {
     const context = getContext();
     const chat = context.chat || [];
@@ -1697,10 +1681,7 @@ async function runExtraction(fullRescan = false, logFn = null, progressFn = null
 
                 try {
                     const secretKey = selectedProfile ? getSecretKeyForProfile(selectedProfile) : null;
-                    const shouldOverrideSecret = Boolean(selectedProfile?.['secret-id'] && secretKey);
-                    const selectedSecretValue = shouldOverrideSecret
-                        ? await findSecret(secretKey, selectedProfile['secret-id'])
-                        : '';
+                    const shouldOverrideSecret = Boolean(!supportsProfileRequest && selectedProfile?.['secret-id'] && secretKey);
                     let savedSecretId = '';
 
                     if (shouldOverrideSecret) {
@@ -1731,10 +1712,7 @@ async function runExtraction(fullRescan = false, logFn = null, progressFn = null
                                 temperature: settings.temperature,
                             };
                             if (selectedSource === 'custom') {
-                                requestOverrides.custom_include_headers = buildCustomHeaderOverride(
-                                    oai_settings.custom_include_headers,
-                                    selectedSecretValue,
-                                );
+                                requestOverrides.custom_include_headers = oai_settings.custom_include_headers;
                                 requestOverrides.custom_include_body = oai_settings.custom_include_body;
                                 requestOverrides.custom_exclude_body = oai_settings.custom_exclude_body;
                             }
